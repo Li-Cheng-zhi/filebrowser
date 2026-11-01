@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gtsteffaniak/filebrowser/backend/internal/workspace"
 	"io"
 	"net/http"
 	"os"
@@ -343,11 +344,14 @@ type BulkDeleteResponse struct {
 
 // MoveCopyItem represents a single item in a move/copy request
 type MoveCopyItem struct {
-	FromSource string `json:"fromSource,omitempty"`
-	FromPath   string `json:"fromPath,omitempty"`
-	ToSource   string `json:"toSource,omitempty"`
-	ToPath     string `json:"toPath,omitempty"`
-	Message    string `json:"message,omitempty"`
+	OldCanonicalPath string `json:"oldCanonicalPath,omitempty"`
+	CanonicalPath    string `json:"canonicalPath,omitempty"`
+	Code             string `json:"code,omitempty"`
+	FromSource       string `json:"fromSource,omitempty"`
+	FromPath         string `json:"fromPath,omitempty"`
+	ToSource         string `json:"toSource,omitempty"`
+	ToPath           string `json:"toPath,omitempty"`
+	Message          string `json:"message,omitempty"`
 }
 
 // MoveCopyRequest represents a move/copy operation request
@@ -724,6 +728,13 @@ func PublicPauseHandler(w http.ResponseWriter, r *http.Request, d *Context) (int
 // @Failure 500 {object} map[string]string "Internal server error"
 // @Router /api/resources [post]
 func ResourcePostHandler(w http.ResponseWriter, r *http.Request, d *Context) (int, error) {
+	if worksEnabled() {
+		unlock, e := worksFiles.Lock(r.Context())
+		if e != nil {
+			return http.StatusRequestTimeout, e
+		}
+		defer unlock()
+	}
 	path := r.URL.Query().Get("path")
 	source := r.URL.Query().Get("source")
 
@@ -777,6 +788,11 @@ func ResourcePostHandler(w http.ResponseWriter, r *http.Request, d *Context) (in
 	realPath, err := idx.GetRealPathForMutation(mutationBound, fullIndexPath)
 	if err != nil {
 		return sanitizePutPathError(err)
+	}
+	if worksEnabled() {
+		if activeErr := worksFiles.CheckActive(realPath); activeErr != nil {
+			return http.StatusConflict, activeErr
+		}
 	}
 
 	if d.Share.Hash == "" {
@@ -1258,6 +1274,17 @@ func resourcePutHandler(w http.ResponseWriter, r *http.Request, d *Context) (int
 		return http.StatusMethodNotAllowed, errPutPathIsDirectory
 	}
 
+	if worksEnabled() {
+		realPath, pathErr := idx.GetRealPathForMutation(userScope, fullIndexPath)
+		if pathErr != nil {
+			return sanitizePutPathError(pathErr)
+		}
+		status, saveErr := worksPut(w, r, d, source, fullIndexPath, realPath)
+		if saveErr == nil {
+			_ = files.RefreshIndex(source, fullIndexPath, false, false)
+		}
+		return status, saveErr
+	}
 	status, err := putResourceWithQuota(w, r, d, source, userScope, fullIndexPath)
 	if err == nil && (status == http.StatusOK || status == 0) {
 		activity.RecordFileModify(r, toActor(d), source, path)
@@ -1325,6 +1352,13 @@ func publicPutHandler(w http.ResponseWriter, r *http.Request, d *Context) (int, 
 // @Failure 500 {object} MoveCopyResponse "All operations failed"
 // @Router /api/resources [patch]
 func ResourcePatchHandler(w http.ResponseWriter, r *http.Request, d *Context) (int, error) {
+	if worksEnabled() {
+		unlock, e := worksFiles.Lock(r.Context())
+		if e != nil {
+			return http.StatusRequestTimeout, e
+		}
+		defer unlock()
+	}
 	req, ok := d.Data.(MoveCopyRequest)
 	if req.Action == "" || !ok {
 		// Parse request body
@@ -1353,6 +1387,9 @@ func ResourcePatchHandler(w http.ResponseWriter, r *http.Request, d *Context) (i
 
 	// Process each item
 	for _, item := range req.Items {
+		item.Code = ""
+		item.OldCanonicalPath = ""
+		item.CanonicalPath = ""
 		clientFromPath := item.FromPath
 		clientToPath := item.ToPath
 
@@ -1550,10 +1587,43 @@ func ResourcePatchHandler(w http.ResponseWriter, r *http.Request, d *Context) (i
 			continue
 		}
 
+		if worksEnabled() {
+			if req.Action != "copy" {
+				if activeErr := worksFiles.CheckActive(realSrc); activeErr != nil {
+					item.Code = "OFFICE_ACTIVE"
+					item.Message = activeErr.Error()
+					response.Failed = append(response.Failed, moveCopyWithClientPaths(item, clientFromPath, clientToPath))
+					continue
+				}
+			}
+		}
+		if !req.Rename && !req.Overwrite {
+			if _, existsErr := os.Lstat(realDest); existsErr == nil {
+				item.Code = "ALREADY_EXISTS"
+				item.Message = "目标已存在；未覆盖，请换名、取消或明确选择覆盖"
+				response.Failed = append(response.Failed, moveCopyWithClientPaths(item, clientFromPath, clientToPath))
+				continue
+			} else if !os.IsNotExist(existsErr) {
+				item.Message = existsErr.Error()
+				response.Failed = append(response.Failed, moveCopyWithClientPaths(item, clientFromPath, clientToPath))
+				continue
+			}
+		}
 		// Auto-rename if requested
 		if req.Rename {
 			realDest = addVersionSuffix(realDest)
+			clientToPath = filepath.ToSlash(filepath.Join(filepath.Dir(clientToPath), filepath.Base(realDest)))
+			fullDstIndexPath = utils.JoinPathAsUnix(filepath.Dir(fullDstIndexPath), filepath.Base(realDest))
 		}
+		if worksEnabled() {
+			if e := worksFiles.CheckActive(realDest); e != nil {
+				item.Code = "OFFICE_ACTIVE"
+				item.Message = e.Error()
+				response.Failed = append(response.Failed, moveCopyWithClientPaths(item, clientFromPath, clientToPath))
+				continue
+			}
+		}
+		oldCanonical, _ := workspace.Canonical(realSrc)
 
 		// Validate move/rename operation to prevent circular references
 		if req.Action == "rename" || req.Action == "move" {
@@ -1637,6 +1707,10 @@ func ResourcePatchHandler(w http.ResponseWriter, r *http.Request, d *Context) (i
 		}
 
 		// Success
+		if worksEnabled() {
+			item.OldCanonicalPath = oldCanonical
+			item.CanonicalPath, _ = workspace.Canonical(realDest)
+		}
 		response.Succeeded = append(response.Succeeded, moveCopyWithClientPaths(item, clientFromPath, clientToPath))
 		activity.RecordPatchItem(r, toActor(d), req.Action, activity.MoveCopyItem{FromSource: item.FromSource, FromPath: clientFromPath, ToPath: clientToPath})
 	}
@@ -1667,6 +1741,16 @@ func ResourcePatchHandler(w http.ResponseWriter, r *http.Request, d *Context) (i
 	if len(response.Failed) > 0 && len(response.Succeeded) == 0 {
 		// All operations failed - return 500 error
 		statusCode = http.StatusInternalServerError
+		allConflicts := true
+		for _, failure := range response.Failed {
+			if failure.Code != "ALREADY_EXISTS" && failure.Code != "OFFICE_ACTIVE" {
+				allConflicts = false
+				break
+			}
+		}
+		if allConflicts {
+			statusCode = http.StatusConflict
+		}
 	} else if len(response.Failed) > 0 && len(response.Succeeded) > 0 {
 		// Some succeeded, some failed - return 207 multi-status
 		statusCode = http.StatusMultiStatus

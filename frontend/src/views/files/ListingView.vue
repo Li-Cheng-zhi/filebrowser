@@ -1,5 +1,6 @@
 <template>
   <div v-if="shareInfo.shareType !== 'upload'" class="listing-view-root no-select" :style="containerStyles">
+    <DirectoryPager v-if="req.page" :page="req.page" />
     <!-- Show loading spinner while loading OR if we haven't loaded any data yet -->
     <div v-if="loading">
       <h2 class="message delayed">
@@ -188,6 +189,7 @@
 </template>
 
 <script>
+import DirectoryPager from '@/works/DirectoryPager.vue';
 import downloadFiles from "@/utils/download";
 import { resourcesApi } from "@/api";
 import { router } from "@/router";
@@ -208,6 +210,7 @@ import { notifyMoveCopyFailure } from "@/utils/appNotifications";
 export default {
   name: "listingView",
   components: {
+    DirectoryPager,
     Item,
     Upload,
     LoadingSpinner,

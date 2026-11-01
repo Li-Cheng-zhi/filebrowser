@@ -8,7 +8,7 @@
     "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
   },
   "scripts": {
-    "build": "mkdir -p ../backend/internal/web/embed && rm -rf ../backend/internal/web/embed/* && vite build && cp -r ../backend/internal/web/dist/* ../backend/internal/web/embed",
+    "build": "mkdir -p ../backend/internal/web/embed && vite build && cp -r ../backend/internal/web/dist/* ../backend/internal/web/embed",
     "build:docker": "vite build",
     "dev": "vite",
     "watch": "vite build --watch",
@@ -39,6 +39,7 @@
     "js-yaml": "^5.5.0",
     "mammoth": "^1.13.0",
     "marked": "^18.1.1",
+    "monaco-editor": "0.57.0",
     "plyr": "^3.8.5",
     "qrcode.vue": "^3.11.0",
     "temml": "^0.14.0",

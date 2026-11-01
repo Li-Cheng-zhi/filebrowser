@@ -57,6 +57,15 @@ func configureHTTPRouter(router, api, publicRoutes, publicApi *http.ServeMux) {
 	// ========================================
 	// Resources Routes - /api/resources/ (with public routes)
 	// ========================================
+	api.HandleFunc("GET /works/directory", withUser(worksDirectoryGet))
+	api.HandleFunc("GET /works/trash", withUser(worksTrashGet))
+	api.HandleFunc("POST /works/trash/restore", withUser(worksTrashRestore))
+	api.HandleFunc("GET /works/file", withUser(worksFileGet))
+ api.HandleFunc("POST /works/file", withUser(worksCreate))
+	api.HandleFunc("GET /works/resolve", withUser(worksResolve))
+	api.HandleFunc("GET /works/office/initial", withUser(worksOfficeInitial))
+	api.HandleFunc("GET /works/office/status", withUser(worksOfficeStatus))
+	api.HandleFunc("POST /works/office/command", withUser(worksOfficeCommand))
 	api.HandleFunc("GET /resources", withUser(resourceGetHandler))
 	api.HandleFunc("GET /resources/items", withUser(itemsGetHandler))
 	api.HandleFunc("DELETE /resources", withUser(resourceDeleteHandler))

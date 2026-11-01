@@ -19,6 +19,7 @@ export interface FileListItem {
 }
 
 export interface ReqObject {
+ page?: {nextCursor: string;total:number;complete:boolean};
   // Base properties always present
   sorting: {
     by: string;

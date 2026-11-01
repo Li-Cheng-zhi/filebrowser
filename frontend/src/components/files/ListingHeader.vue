@@ -97,6 +97,7 @@
 </template>
 
 <script>
+import { router } from '@/router';
 import { state, getters, mutations } from "@/store";
 
 export default {
@@ -230,6 +231,7 @@ export default {
         return;
       }
       mutations.updateListingSortConfig({ field, asc });
+      if(state.req.page){const query={...state.route.query};delete query.fcursor;delete query.fpage;query.forder=field;query.fdescending=String(!asc);query.frefresh=String(Date.now());void router.replace({path:state.route.path,query});return;}
       mutations.updateListingItems();
     },
   },

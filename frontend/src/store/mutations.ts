@@ -907,8 +907,8 @@ export const mutations = {
     const dirs = value.items.filter((item: FileListItem) => item.type === 'directory');
     const files = value.items.filter((item: FileListItem) => item.type !== 'directory');
     // Sort them separately
-    const sortedDirs = sortedItems(dirs, sortby, asc);
-    const sortedFiles = sortedItems(files, sortby, asc);
+    const sortedDirs = value.page ? dirs : sortedItems(dirs, sortby, asc);
+    const sortedFiles = value.page ? files : sortedItems(files, sortby, asc);
     value.items = [...sortedDirs, ...sortedFiles];
     value.items.forEach((item: FileListItem & { index?: number }, index: number) => {
       item.index = index;

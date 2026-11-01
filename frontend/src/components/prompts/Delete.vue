@@ -6,7 +6,8 @@
         <p class="loading-text">{{ $t("prompts.operationInProgress") }}</p>
       </div>
       <div v-show="!deleting">
-        <p class="card-message" v-if="itemsToDelete.length === 1">
+        <p v-if="worksFiles">所选项目将移入系统回收站，可从回收记录恢复。</p>
+        <p class="card-message" v-else-if="itemsToDelete.length === 1">
           {{ $t("prompts.deleteMessageSingle") }}
         </p>
         <p class="card-message" v-else>
@@ -108,6 +109,7 @@ export default {
     }
   },
   computed: {
+ worksFiles(){return window.globalVars?.worksFiles===true},
     isListing() {
       return getters.isListing();
     },

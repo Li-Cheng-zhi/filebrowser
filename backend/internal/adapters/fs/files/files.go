@@ -647,6 +647,10 @@ func extractVideoMetadata(ctx context.Context, item *iteminfo.ExtendedItemInfo, 
 // symlink resolution to the caller's scope ("" or "/" = source root only). The
 // entry itself is removed: a symlink leaf is deleted, never followed, and an
 // intermediate symlinked component cannot carry the delete outside the bound.
+// TrashEntry is installed by the Works integration. All existing delete paths
+// keep the same path checks and index maintenance, but use the system Trash.
+var TrashEntry func(source, path string) error
+
 func DeleteFiles(source, boundIndexPath, indexPath string, isDir bool) error {
 	index := indexing.GetIndex(source)
 	if index == nil {
@@ -662,13 +666,20 @@ func DeleteFiles(source, boundIndexPath, indexPath string, isDir bool) error {
 
 	if index.Config.ResolvedRules.IndexingDisabled {
 		// Indexing disabled, just delete the file
+		if TrashEntry != nil {
+			return TrashEntry(source, realPath)
+		}
 		return os.RemoveAll(realPath)
 	}
 
 	indexPath = index.MakeIndexPath(indexPath, isDir).String()
 
 	// Perform the physical deletion
-	err = os.RemoveAll(realPath)
+	if TrashEntry != nil {
+		err = TrashEntry(source, realPath)
+	} else {
+		err = os.RemoveAll(realPath)
+	}
 	if err != nil {
 		return err
 	}

@@ -120,3 +120,14 @@ func TestSpaContentSecurityPolicy_IncludesOnlyOfficeOrigins(t *testing.T) {
 		})
 	}
 }
+
+func TestWorksCSPAllowsOnlySameOriginMonacoWorkers(t *testing.T) {
+	t.Setenv("WORKS_FILES_RUNTIME", t.TempDir())
+	policy := spaContentSecurityPolicy("workerprobe")
+	if !strings.Contains(policy, "worker-src 'self' blob:") {
+		t.Fatal(policy)
+	}
+	if strings.Contains(policy, "unsafe-eval") || strings.Contains(policy, "unsafe-inline") {
+		t.Fatal("unexpected unrestricted script execution", policy)
+	}
+}

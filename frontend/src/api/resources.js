@@ -1,3 +1,4 @@
+import { bridge } from '@/works/api.js';
 import { notify } from "@/notify/index.ts"
 import { getters, mutations, state } from "@/store/index.ts"
 import { globalVars } from "@/utils/constants.js"
@@ -255,6 +256,8 @@ export async function bulkDelete(items) {
     const data = await response.json()
     // 200 = all succeeded, 207 = partial success (some succeeded, some failed)
     if (response.status === 200 || response.status === 207) {
+      if(globalVars.worksFiles){for(const item of data.succeeded||[]){if(action!=='copy')await bridge({action:'relocated',oldCanonicalPath:item.oldCanonicalPath,canonicalPath:item.canonicalPath});}await bridge({action:'changed'});}
+
       for (const item of items) {
         invalidateDirMetadataCache({ source: item.source, path: getParentDir(item.path) })
       }

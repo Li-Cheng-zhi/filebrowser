@@ -158,6 +158,8 @@
 </template>
 
 <script>
+import { openItem } from '@/works/directory.js';
+import { fileURL } from '@/works/api.js';
 import { globalVars } from "@/utils/constants";
 import downloadFiles from "@/utils/download";
 import { getHumanReadableFilesize } from "@/utils/filesizes";
@@ -496,6 +498,7 @@ export default {
       window.location.hash = path;
     },
     getUrl() {
+ if(globalVars.worksFiles && !this.hash && !this.isDir)return fileURL(this.source,this.path);
       if (this.hash) {
         return `${globalVars.baseURL}public/share/${this.hash}/${url.encodedPath(this.path)}`;
       }
@@ -883,6 +886,7 @@ export default {
       }
     },
     open() {
+ if(globalVars.worksFiles && !this.hash && !this.isDir && this.updateGlobalState){openItem(this.source,this.path).catch(e=>notify.showError(e.message));return;}
       // Don't navigate if updateGlobalState is false (component is being used as a picker/selector)
       if (!this.updateGlobalState) {
         return;

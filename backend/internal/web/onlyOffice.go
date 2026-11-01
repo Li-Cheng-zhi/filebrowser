@@ -304,6 +304,12 @@ func onlyofficeClientConfigGetHandler(w http.ResponseWriter, r *http.Request, d 
 		},
 	}
 
+	if worksEnabled() {
+		if err := worksOfficeConfig(r, clientConfig, d.FileInfo.RealPath); err != nil {
+			return http.StatusConflict, err
+		}
+	}
+
 	// Sign configuration with JWT if secret is configured
 	if settings.Config.Integrations.OnlyOffice.Secret != "" {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims(clientConfig))
@@ -640,7 +646,10 @@ func processOnlyOfficeCallback(w http.ResponseWriter, r *http.Request, d *Contex
 		}
 
 		// For status 3 (saving error), don't attempt to save the file
-		if data.Status == onlyOfficeStatusDocumentSavingError {
+		if data.Status == onlyOfficeStatusDocumentSavingError || (worksEnabled() && data.Status == onlyOfficeStatusForceSaveError) {
+			if worksEnabled() {
+				worksOffice.Fail(data.Key, "文档服务器报告保存失败")
+			}
 			logger.Warningf("OnlyOffice callback: document saving error occurred, not attempting to save")
 			return returnOnlyOfficeSuccess(w, r)
 		}
@@ -688,6 +697,10 @@ func processOnlyOfficeCallback(w http.ResponseWriter, r *http.Request, d *Contex
 		// Send detailed log event for file saving with path information
 		if logContext := GetOnlyOfficeLogContext(data.Key); logContext != nil {
 			SendOnlyOfficeLogEvent(logContext, "INFO", "callback", fmt.Sprintf("Saving document to path: %s", path))
+		}
+
+		if worksEnabled() {
+			return worksOfficeCommit(w, r, data, doc.Body)
 		}
 
 		// CRITICAL: Validate that the original file still exists before saving
@@ -912,6 +925,16 @@ func onlyOfficeCallbackFromClaims(claims jwt.MapClaims) (*OnlyOfficeCallback, er
 func validateOnlyOfficeCallbackKey(source, path string, user *users.User, data *OnlyOfficeCallback) error {
 	if data.Key == "" {
 		return errors.New("missing document key in callback")
+	}
+	if worksEnabled() {
+		session, err := worksOffice.Get(data.Key)
+		if err != nil {
+			return err
+		}
+		if session.Source != source || session.IndexPath != path {
+			return errors.New("Office 回调路径与固定会话不符")
+		}
+		return nil
 	}
 	fi, err := files.FileInfoFaster(utils.FileOptions{
 		Path:           path,

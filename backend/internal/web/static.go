@@ -81,7 +81,11 @@ func spaContentSecurityPolicy(nonce string) string {
 	for _, origin := range onlyOfficeScriptSrcOrigins() {
 		policy += " " + origin
 	}
-	policy += "; worker-src blob:"
+	if worksEnabled() {
+		policy += "; worker-src 'self' blob:"
+	} else {
+		policy += "; worker-src blob:"
+	}
 	return policy
 }
 
@@ -285,6 +289,7 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		"externalLinks":          externalLinks,
 		"externalUrl":            strings.TrimSuffix(settings.Config.Http.ExternalUrl, "/"),
 		"onlyOfficeUrl":          settings.Config.Integrations.OnlyOffice.Url,
+		"worksFiles":             worksEnabled(),
 		"oidcAvailable":          settings.Config.Auth.Methods.OidcAuth.Enabled,
 		"jwtAvailable":           settings.Config.Auth.Methods.JwtAuth.Enabled,
 		"proxyAvailable":         settings.Config.Auth.Methods.ProxyAuth.Enabled,

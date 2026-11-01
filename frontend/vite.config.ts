@@ -69,7 +69,7 @@ export default defineConfig(({ command }) => {
     !isDevBuild && !isServe && compression({
       algorithms: ["gzip"],
       include: /\.(js|woff2|woff)(\?|$)/i,
-      deleteOriginalAssets: true,
+      deleteOriginalAssets: false,
     }),
     // Disable checker in watch mode to prevent task failures
     !isDevBuild && !isServe && checker({
@@ -111,7 +111,7 @@ export default defineConfig(({ command }) => {
     define,
     build: {
       outDir: backendWebDist,
-      emptyOutDir: true,
+      emptyOutDir: false,
       // Optimize for watch mode stability
       watch: isDevBuild ? {
         // Add buildDelay to batch multiple changes

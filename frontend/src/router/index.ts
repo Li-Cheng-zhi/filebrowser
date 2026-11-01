@@ -43,6 +43,8 @@ const titles: Record<string, string> = {
 };
 
 const routes: RouteRecordRaw[] = [
+ {path:"/works/trash",name:"WorksTrash",component:()=>import("@/works/TrashPage.vue"),meta:{requiresAuth:true}},
+ {path:"/works/file",name:"WorksFile",component:()=>import("@/works/FilePage.vue"),meta:{requiresAuth:true}},
   {
     path: "/login",
     name: "Login",

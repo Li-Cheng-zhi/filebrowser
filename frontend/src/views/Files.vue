@@ -1,7 +1,8 @@
 <template>
   <div>
     <div v-if="loadingProgress < 100" class="progress-line" :style="{ width: `${loadingProgress}%`, ...moveWithSidebar }"></div>
-    <errors v-if="error" :errorCode="error.status" />
+    <div v-if="error?.status===410" class="message"><p>目录快照已失效，请刷新目录后重新翻页。</p><button @click="refreshWorks">刷新目录</button></div>
+    <errors v-else-if="error" :errorCode="error.status" />
     <component v-else-if="currentViewLoaded" :is="currentView" :fbdata="req"></component>
     <div v-else>
       <h2 class="message delayed">
@@ -13,6 +14,9 @@
 </template>
 
 <script>
+import { directoryPage } from '@/works/directory.js';
+import { openItem } from '@/works/directory.js';
+import { fileURL } from '@/works/api.js';
 import { createAsyncComponent } from "@/utils/asyncComponent.js";
 import { resourcesApi, shareApi, mediaApi } from "@/api";
 import Errors from "@/views/Errors.vue";
@@ -86,7 +90,10 @@ async function fetchShareItemWithParent(sharePassword) {
 
 /** @returns {Promise<{ items?: object[], name: string, type: string, path: string, source: string, parentDirItems?: object[] }>} */
 async function fetchAuthItemWithParent(fetchSource, fetchPath) {
+  if(globalVars.worksFiles && (!fetchPath || fetchPath.endsWith('/')))return directoryPage(fetchSource,fetchPath||'/');
   let res = await resourcesApi.fetchFiles(fetchSource, fetchPath, false, false);
+  if(globalVars.worksFiles && res.type==='directory')return directoryPage(fetchSource,fetchPath);
+  if(globalVars.worksFiles)return res;
   if (res.type === "directory") {
     return res;
   }
@@ -221,6 +228,7 @@ export default {
     mutations.replaceRequest({}); // Use mutation
   },
   methods: {
+    async refreshWorks(){const query={...this.$route.query};delete query.fcursor;delete query.fpage;query.frefresh=String(Date.now());await router.replace({path:this.$route.path,query})},
     selectAndScroll(name, replaceSelection = false) {
       const index = state.req?.items?.findIndex((item) => item.name === name) ?? -1;
       if (index === -1) return false;
@@ -477,6 +485,10 @@ export default {
           const fetchPath = decodeURIComponent(result.path);
 
           const res = await fetchAuthItemWithParent(fetchSource, fetchPath);
+          if(globalVars.worksFiles && res.type!=='directory'){
+            if(window.cefQuery){await openItem(fetchSource,fetchPath);await router.replace(`/files/${encodeURIComponent(fetchSource)}${removeLastDir(fetchPath)}/`)}else{await router.replace(fileURL(fetchSource,fetchPath))}
+            this.loadingProgress=100;return;
+          }
           if (state.sources.count > 1) {
             mutations.setCurrentSource(res.source);
           }
@@ -486,7 +498,7 @@ export default {
             state.pendingHighlight = { path: res.path, source: res.source };
           }
           mutations.setLoading("files", false);
-          await this.patchMediaMetadataIfNeeded(res, fetchSource);
+          if(res.page)this.loadingProgress=100;else await this.patchMediaMetadataIfNeeded(res, fetchSource);
         }
 
       } catch (e) {

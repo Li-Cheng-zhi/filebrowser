@@ -1,0 +1,17 @@
+<template><div class="works-pager"><button :disabled="index===0||busy" @click="previous">上一页</button><span>第 {{ index+1 }} 页 · 共 {{ page.total }} 项</span><button :disabled="!page.nextCursor||busy" @click="next">下一页</button><button :disabled="busy" @click="refresh">刷新目录</button><button v-if="native" @click="openRight">右侧对照</button><a href="/works/trash" target="_blank">回收站</a><small>筛选作用于当前页；全目录查找请使用搜索。</small></div></template>
+<script>
+import { state } from '@/store';import { router } from '@/router';import { openItem } from './directory.js';import { bridge } from './api.js';import { mutations,getters } from '@/store';
+const histories=new Map();
+export default {props:{page:Object},
+ async mounted(){window.worksFilesHost={refresh:()=>this.refresh(),openMain:()=>openItem(state.req.source,state.req.path)};window.addEventListener('scroll',this.queueReport,true);window.addEventListener('click',this.queueReport,true);const restore=await this.report();if(restore?.scroll){const root=document.getElementById('main');if(root)root.scrollTop=restore.scroll;}if(restore?.selected){mutations.resetSelected();for(const path of restore.selected){const index=state.req.items.findIndex(item=>item.path===path);if(index>=0)mutations.addSelected(index)}}await this.report();},
+ beforeUnmount(){clearTimeout(this.reportTimer);window.removeEventListener('scroll',this.queueReport,true);window.removeEventListener('click',this.queueReport,true);delete window.worksFilesHost},
+data(){return{busy:false,native:!!window.cefQuery,reportTimer:null}},computed:{index(){return Math.max(0,Number(this.$route.query.fpage)||0)},key(){return state.req.source+'\0'+state.req.path},history(){if(!histories.has(this.key))histories.set(this.key,['']);return histories.get(this.key)}},methods:{
+ queueReport(){clearTimeout(this.reportTimer);this.reportTimer=setTimeout(()=>this.report(),250)},
+ report(){return bridge({action:'navigation',url:location.pathname+location.search,scroll:document.getElementById('main')?.scrollTop||0,selected:state.selected.map(index=>state.req.items[index]?.path).filter(Boolean),sorting:getters.sorting()})},
+ async go(cursor,index){this.busy=true;try{const q={...this.$route.query};if(cursor)q.fcursor=cursor;else delete q.fcursor;if(index)q.fpage=String(index);else delete q.fpage;await router.replace({path:this.$route.path,query:q});await this.report()}finally{this.busy=false}},
+ async next(){this.history[this.index+1]=this.page.nextCursor;await this.go(this.page.nextCursor,this.index+1)},
+ async previous(){const cursor=this.history[this.index-1];if(cursor===undefined){await this.refresh();return;}await this.go(cursor,this.index-1)},
+ async refresh(){if(this.index===0){const q={...this.$route.query};q.frefresh=String(Date.now());await router.replace({path:this.$route.path,query:q})}else await this.go('',0)},
+ async openRight(){const item=state.req.items?.[state.selected?.[0]];try{await openItem(item?.source||state.req.source,item?.path||state.req.path,true)}catch(e){window.alert(e.message)}}
+}}</script>
+<style scoped>.works-pager{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--surfacePrimary);border-bottom:1px solid var(--divider);position:sticky;top:0;z-index:4;font-size:12px}.works-pager button{padding:5px 9px;border-radius:5px;border:1px solid var(--divider);background:var(--surfaceSecondary);color:var(--textPrimary);cursor:pointer}.works-pager small{opacity:.7}</style>
