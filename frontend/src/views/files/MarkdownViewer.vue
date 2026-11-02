@@ -460,6 +460,10 @@ function addLineNumbers(codeBlock: HTMLElement) {
         showFeedback(false);
       });
   });
+  const language = document.createElement('span');
+  language.className = 'code-language';
+  language.textContent = codeBlock.className.split(/\s+/).find(c => c.startsWith('language-'))?.slice(9) || '';
+  wrapper.appendChild(language);
   wrapper.appendChild(copyButton);
 
   // Create line numbers container
@@ -834,8 +838,10 @@ function applyScrollRatio(line: number) {
 
 <style>
 #markedown-viewer {
-  margin: 1em;
+  margin: 0;
   overflow-wrap: break-word;
+  color: var(--textPrimary);
+  user-select: text;
 }
 
 #markedown-viewer.html-viewer-mode {
@@ -848,11 +854,15 @@ function applyScrollRatio(line: number) {
 }
 
 #markedown-viewer .markdown-content-container {
-  background-color: color-mix(in srgb, var(--surfacePrimary) 75%, transparent);
-  border-radius: var(--borderRadius);
-  padding: 1.2em;
-  margin: 0 auto;
-  box-shadow: var(--surfaceElevationShadow);
+  /* Same report scale as desktop MdTone.Report / DsType, rendered in CEF. */
+  padding: 12px;
+  margin: 0;
+  font-family: "Works Tinos", "Times New Roman", "Works Han Serif", "Songti SC", serif;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 27px;
+  text-align: start;
+  background: transparent;
 }
 
 #markedown-viewer .markdown-content,
@@ -886,135 +896,71 @@ function applyScrollRatio(line: number) {
 }
 
 /* Code block wrapper with line numbers */
+#markedown-viewer .md-block:empty { display: none; }
+#markedown-viewer .md-block + .md-block { margin-top: 12px; }
+#markedown-viewer .md-block > :first-child { margin-top: 0; }
+#markedown-viewer .md-block > :last-child { margin-bottom: 0; }
+
 #markedown-viewer .markdown-content-container .code-block-wrapper {
-  display: flex;
-  background-color: var(--background);
-  border-radius: 0.5em;
-  overflow: hidden;
-  margin: 1em 0;
-  font-family: SFMono-Regular, Monaco, Inconsolata, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 0.85em;
-  line-height: 1.45;
-  max-width: 100%;
   position: relative;
-}
-
-#markedown-viewer .markdown-content code:not(pre code) {
-  background-color: var(--background);
-  padding: 0.25em 0.4em;
-  border-radius: 0.5em;
-  font-family: SFMono-Regular, Monaco, Inconsolata, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 0.85em;
-}
-
-/* keybinds like <kbd>Ctrl</kbd> */
-#markedown-viewer .markdown-content kbd {
-  background-color: var(--background);
+  padding-top: 30px;
+  overflow: hidden;
   border: 1px solid var(--divider);
-  border-radius: 0.35em;
-  padding: 0.1em 0.5em;
-  font-family: SFMono-Regular, Monaco, Inconsolata, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 0.85em;
-  box-shadow: inset 0 -2px 0 var(--divider);
+  border-radius: 6px;
+  background: var(--surfaceSecondary, #f7f7f8);
+  font: 12.5px/19px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-
+#markedown-viewer .code-language {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  color: var(--textSecondary);
+  font: 600 11px/18px ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: none;
+}
+#markedown-viewer .markdown-content code:not(pre code) {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surfaceSecondary, #f1f1f3);
+  font: 12.5px/19px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#markedown-viewer .markdown-content kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 #markedown-viewer .markdown-content-container .copy-code-button {
   position: absolute;
-  top: 0.4em;
-  right: 0.3em;
-  border-radius: 0.45em;
-  color: var(--primaryColor);
-  background: var(--background);
-  font-size: 0.8em;
-  padding: 0.2em 0.4em;
-  transition: background 0.2s, color 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Line numbers styling */
-#markedown-viewer .markdown-content-container .line-numbers {
-  -webkit-touch-callout: none;
-  user-select: none;
-  background-color: var(--background);
-  border-right: 1px solid var(--divider);
-  padding: 0.625em 0.5em 0.625em 0.75em;
-  text-align: right;
+  top: 2px;
+  right: 4px;
+  padding: 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--textSecondary);
-  min-width: 2em;
-  flex-shrink: 0;
-}
-
-#markedown-viewer .markdown-content-container .line-number {
-  display: block;
-  white-space: nowrap;
-  height: 1.45em;
-  line-height: 1.45;
   cursor: pointer;
-  transition: background-color 0.2s ease, color 0.2s ease;
 }
-
-#markedown-viewer .markdown-content-container .line-number:hover {
-  background-color: transparent;
-  color: var(--primaryColor);
-}
-
-#markedown-viewer .markdown-content-container .line-number.active {
-  background-color: color-mix(in srgb, var(--primaryColor) 30%, transparent);
-  color: var(--primaryColor);
-  border-radius: 0.25em;
-}
-
-/* Individual code lines */
-#markedown-viewer .markdown-content-container .code-line {
-  display: block;
-  white-space: pre;
-  line-height: 1.45;
-  min-height: 1.45em;
-  transition: background-color 0.2s ease;
-}
-
-#markedown-viewer .markdown-content-container .code-line.highlighted {
-  background-color: color-mix(in srgb, var(--primaryColor) 20%, transparent);
-}
-
-/* Code content styling */
-#markedown-viewer .markdown-content-container .code-content {
-  flex: 1;
-  overflow-x: auto;
-  max-width: 100%;
-}
-
+#markedown-viewer .copy-code-button .material-symbols-outlined { font-size: 16px; }
+/* Reading is the default; source-line anchors remain available for editor sync. */
+#markedown-viewer .line-numbers { display: none; }
+#markedown-viewer .markdown-content-container .code-content { overflow-x: auto; }
 #markedown-viewer .markdown-content-container .code-content pre {
   margin: 0;
-  border-radius: 0;
-  padding: 0;
-  font-family: inherit;
-  font-size: inherit;
-  line-height: 1.45;
-  width: 100%;
+  padding: 0 10px 8px;
+  overflow: visible;
+  background: transparent;
+  font: inherit;
 }
-
 #markedown-viewer .markdown-content-container .code-content code {
-  padding: 0.5em;
-  padding-top: 0.65em;
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
   display: block;
-  white-space: pre;
+  padding: 0;
+  min-width: max-content;
+  background: transparent;
+  font: inherit;
 }
-
-/* Fix for code content line height to match line numbers exactly */
-#markedown-viewer .markdown-content-container .code-content pre code {
-  line-height: 1.45;
-}
-
-/* Ensure each line in the code has the same height as line numbers */
-#markedown-viewer .markdown-content-container .code-content pre code br {
-  line-height: 1.45;
-}
+#markedown-viewer .code-line { min-height: 19px; white-space: pre; }
+#markedown-viewer .code-line.highlighted { background: var(--surfaceSelected, #e8eef9); }
 
 #markedown-viewer .markdown-content a {
   color: var(--primaryColor);
@@ -1034,35 +980,35 @@ function applyScrollRatio(line: number) {
 #markedown-viewer .markdown-content h5,
 #markedown-viewer .markdown-content h6 {
   font-weight: 600;
-  line-height: 1.25;
-  margin: 1.4em 0 0.6em;
+  line-height: 1.6;
+  margin: 12px 0;
   text-wrap: balance;
 }
 
 #markedown-viewer .markdown-content h1 {
-  font-size: 1.8em;
+  font-size: 18px;
   padding-bottom: 0.3em;
   margin-top: 0;
   border-bottom: 1px solid var(--divider);
 }
 
 #markedown-viewer .markdown-content h2 {
-  font-size: 1.45em;
+  font-size: 16px;
   padding-bottom: 0.3em;
   border-bottom: 1px solid var(--divider);
 }
 
 #markedown-viewer .markdown-content h3 {
-  font-size: 1.2em;
+  font-size: 15px;
 }
 
 #markedown-viewer .markdown-content h4 {
-  font-size: 1em;
+  font-size: 14px;
 }
 
 #markedown-viewer .markdown-content p {
-  line-height: 1.45;
-  margin-bottom: 0.85em;
+  line-height: 27px;
+  margin-bottom: 12px;
   margin-top: 0;
   text-wrap: pretty;
 }
@@ -1074,29 +1020,31 @@ function applyScrollRatio(line: number) {
 }
 
 #markedown-viewer .markdown-content ul {
-  padding-left: 2em; /* base indent for first lvl */
-  padding-bottom: 0.85em;
+  padding-left: 22px;
+  padding-bottom: 0;
   margin-top: 0;
   margin-bottom: 0;
 }
 
 #markedown-viewer .markdown-content ol {
-  padding-bottom: 0.85em;
+  padding-left: 22px;
+  padding-bottom: 0;
+  margin: 0;
 }
 
 #markedown-viewer .markdown-content ul ul,
 #markedown-viewer .markdown-content ul ol,
 #markedown-viewer .markdown-content ol ul,
 #markedown-viewer .markdown-content ol ol {
-  padding-left: 2em; /* indent for nested lvls */
+  padding-left: 14px;
   padding-bottom: 0;
 }
 
 /* line height for list items and any paragraphs inside the nested lvls */
 #markedown-viewer .markdown-content li,
 #markedown-viewer .markdown-content li p {
-  line-height: 1.5;
-  margin-top: 0.25em;
+  line-height: 27px;
+  margin-top: 3px;
   margin-bottom: 0;
 }
 
@@ -1152,13 +1100,17 @@ function applyScrollRatio(line: number) {
   width: max-content;
   max-width: 100%;
   overflow: auto;
-  margin: 1em 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 22px;
 }
 
 #markedown-viewer .markdown-content th,
 #markedown-viewer .markdown-content td {
   border: 1px solid var(--divider);
-  padding: 6px 13px;
+  padding: 5px 8px;
+  min-width: 44px;
+  max-width: 232px;
   word-break: normal;
   overflow-wrap: normal;
 }
@@ -1170,17 +1122,17 @@ function applyScrollRatio(line: number) {
 }
 
 #markedown-viewer .markdown-content tbody tr:nth-child(even) {
-  background-color: var(--background);
+  background-color: transparent;
 }
 
 /* Blockquotes */
 #markedown-viewer .markdown-content blockquote {
-  margin: 1em 0;
-  padding: 0.1em 1em;
-  border-left: 0.25em solid var(--primaryColor);
-  background-color: color-mix(in srgb, var(--primaryColor) 8%, transparent);
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--divider);
+  background-color: transparent;
   color: color-mix(in srgb, var(--textPrimary) 75%, transparent);
-  border-radius: 0 0.5em 0.5em 0;
+  border-radius: 0;
 }
 
 #markedown-viewer .markdown-content blockquote blockquote {
@@ -1208,9 +1160,13 @@ function applyScrollRatio(line: number) {
   padding: 0 0.2em;
 }
 
+#markedown-viewer .works-math:has(math[display="block"]) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
 #markedown-viewer .markdown-content math[display="block"] {
-  margin-top: 0.85em;
-  margin-bottom: 0.85em;
+  margin: 0;
 }
 
 </style>
