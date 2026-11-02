@@ -1,12 +1,23 @@
-<template><div class="works-pager"><button :disabled="!windowPages?.first.page.previousCursor||busy" @click="loadMore('previous')">加载前段</button><span>当前第 {{ firstIndex }}—{{ lastIndex }} 页 · 共 {{ page.total }} 项</span><button :disabled="!windowPages?.last.page.nextCursor||busy" @click="loadMore('next')">继续加载</button><button :disabled="busy" @click="refresh">刷新目录</button><button v-if="native" @click="openRight">右侧对照</button><a href="/works/trash" target="_blank" @click="openTrash">回收站</a><input aria-label="筛选已加载项" placeholder="筛选已加载项" :value="filter" @input="setFilter($event.target.value)" /><small>{{ message || '滚动自动续拉；筛选仅作用于已加载范围。' }}</small></div></template>
+<template><div class="works-pager">
+ <div class="works-tools">
+  <button v-if="windowPages.first.page.previousCursor" :disabled="busy" title="加载前段" aria-label="加载前段" @click="loadMore('previous')"><i class="material-symbols">arrow_upward</i></button>
+  <button v-if="windowPages.last.page.nextCursor" :disabled="busy" title="继续加载" aria-label="继续加载" @click="loadMore('next')"><i class="material-symbols">arrow_downward</i></button>
+  <input aria-label="筛选已加载项" placeholder="筛选已加载项" :value="filter" @input="setFilter($event.target.value)" />
+  <button :disabled="busy" title="刷新目录" aria-label="刷新目录" @click="refresh"><i class="material-symbols">refresh</i></button>
+  <button v-if="native&&!side" title="在右侧打开所选文件或当前目录" aria-label="右侧对照" @click="openRight"><i class="material-symbols">vertical_split</i></button>
+  <a href="/works/trash" target="_blank" title="系统回收站" aria-label="系统回收站" @click="openTrash"><i class="material-symbols">delete_outline</i></a>
+ </div>
+ <small class="works-range" title="滚动会自动续拉相邻页面；筛选仅作用于已加载范围。">{{ firstIndex===1&&!windowPages.last.page.nextCursor?'共 '+page.total+' 项':'已加载第 '+firstIndex+'—'+lastIndex+' 页 / 共 '+page.total+' 项' }}</small>
+ <small v-if="message" class="works-message" role="status">{{ message }}</small>
+</div></template>
 <script>
 import { state,mutations,getters } from '@/store';import { router } from '@/router';import { nextTick } from 'vue';
 import { openItem,directoryPage } from './directory.js';import { bridge } from './api.js';import { PageWindow } from './pageWindow.js';
 export default {
- props:{page:Object},data(){return{windowPages:new PageWindow(state.req),busy:false,native:!!window.cefQuery,reportTimer:null,merging:false,message:'',filter:'',lastScroll:0,restored:false,refreshAnchor:null,refreshSelection:[]}},
+ props:{page:Object},data(){return{windowPages:new PageWindow(state.req),busy:false,native:!!window.cefQuery,side:this.$route.query.right==='1',reportTimer:null,merging:false,message:'',filter:'',lastScroll:0,restored:false,refreshAnchor:null,refreshSelection:[]}},
  computed:{firstIndex(){return this.windowPages.first.page.index},lastIndex(){return this.windowPages.last.page.index}},
  watch:{page(){if(!this.merging){this.windowPages=new PageWindow(state.req);this.message='';this.filter=state.req.worksFilter||'';this.lastScroll=0;nextTick(()=>{if(this.refreshAnchor){this.restoreAnchor(this.refreshAnchor);this.selectPaths(this.refreshSelection);this.refreshAnchor=null;}this.report()})}}},
- async mounted(){window.worksFilesHost={refresh:change=>{if(!change?.canonicalPath)return this.refresh()},openMain:()=>openItem(state.req.source,state.req.path)};window.addEventListener('scroll',this.scrolled,true);window.addEventListener('click',this.queueReport,true);const restore=await this.report();if(typeof restore?.filter==='string')this.setFilter(restore.filter);await nextTick();if(restore?.anchor)this.restoreAnchor(restore.anchor);else if(restore?.scroll){const root=document.getElementById('main');if(root)root.scrollTop=restore.scroll}if(restore?.selected){this.selectPaths(restore.selected)}this.restored=true;this.lastScroll=document.getElementById('main')?.scrollTop||0;await this.report()},
+ async mounted(){if(this.native){try{this.side=!!(await bridge({action:'context'}))?.right}catch{}}window.worksFilesHost={refresh:change=>{if(!change?.canonicalPath)return this.refresh()},openMain:()=>openItem(state.req.source,state.req.path)};window.addEventListener('scroll',this.scrolled,true);window.addEventListener('click',this.queueReport,true);const restore=await this.report();if(typeof restore?.filter==='string')this.setFilter(restore.filter);await nextTick();if(restore?.anchor)this.restoreAnchor(restore.anchor);else if(restore?.scroll){const root=document.getElementById('main');if(root)root.scrollTop=restore.scroll}if(restore?.selected){this.selectPaths(restore.selected)}this.restored=true;this.lastScroll=document.getElementById('main')?.scrollTop||0;await this.report()},
  beforeUnmount(){clearTimeout(this.reportTimer);window.removeEventListener('scroll',this.scrolled,true);window.removeEventListener('click',this.queueReport,true);delete window.worksFilesHost},
  methods:{
  async openTrash(event){if(this.native){event.preventDefault();try{await bridge({action:'trash'})}catch(e){this.message=e.message}}},
@@ -24,4 +35,7 @@ export default {
  async openRight(){const item=state.req.items?.[state.selected?.[0]];try{await openItem(item?.source||state.req.source,item?.path||state.req.path,true)}catch(e){window.alert(e.message)}}
  }}
 </script>
-<style scoped>.works-pager{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--surfacePrimary);border-bottom:1px solid var(--divider);position:sticky;top:0;z-index:4;font-size:12px;flex-shrink:0}.works-pager button{padding:5px 9px;border-radius:5px;border:1px solid var(--divider);background:var(--surfaceSecondary);color:var(--textPrimary);cursor:pointer}.works-pager small{opacity:.7}</style>
+<style scoped>
+.works-pager{display:flex;flex-direction:column;gap:4px;padding:6px 12px;background:var(--surfacePrimary);border-bottom:1px solid var(--divider);position:sticky;top:0;z-index:4;font-size:12px;flex-shrink:0}
+.works-tools{display:flex;align-items:center;gap:4px;min-width:0}.works-tools button,.works-tools a{display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--textPrimary);cursor:pointer;flex-shrink:0;text-decoration:none}.works-tools button:hover,.works-tools a:hover{background:var(--surfaceSecondary)}.works-tools button:disabled{opacity:.4;cursor:default}.works-tools .material-symbols{font-size:18px}.works-tools input{flex:1;min-width:70px;max-width:400px;height:28px;box-sizing:border-box;padding:3px 8px;border:1px solid var(--divider);border-radius:5px;background:var(--surfaceSecondary);color:var(--textPrimary);font-size:12px}.works-range{opacity:.65;font-size:11px}.works-message{color:var(--textPrimary);overflow-wrap:anywhere}
+</style>
