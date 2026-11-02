@@ -78,3 +78,37 @@ func TestGlobalOrderPrecedesPageSlicing(t *testing.T) {
 		t.Fatal(names)
 	}
 }
+
+func TestPageBackCursorRestoresSameSnapshotWithoutClientHistory(t *testing.T) {
+	p := NewPages()
+	first, e := p.Create("scope", []json.RawMessage{json.RawMessage(`{"name":"a"}`), json.RawMessage(`{"name":"b"}`), json.RawMessage(`{"name":"c"}`)}, nil, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	second, e := p.Next("scope", first.Next, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	back, e := p.Next("scope", second.Previous, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if back.Offset != 0 || string(back.Items[0]) != string(first.Items[0]) {
+		t.Fatal(back)
+	}
+}
+
+func TestNewSnapshotCanRestoreVisibleAnchorAfterDirectoryChanges(t *testing.T) {
+	p := NewPages()
+	items := []json.RawMessage{}
+	for _, name := range []string{"new", "a", "b", "c", "d"} {
+		items = append(items, json.RawMessage(`{"name":"`+name+`"}`))
+	}
+	page, e := p.CreateOrderAt("scope", items, nil, 2, "name", true, "c")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if page.Offset != 2 || !strings.Contains(string(page.Items[0]), `"c"`) {
+		t.Fatal(page)
+	}
+}

@@ -38,7 +38,7 @@
       <template v-if="numDirs + numFiles + numPinned === 0">
         <h2 class="message font-size-large">
           <i class="material-symbols-outlined">sentiment_dissatisfied</i>
-          <span>{{ $t("files.lonely") }}</span>
+          <span v-if="state.req.worksFilter">当前已加载范围没有匹配项，可清除筛选或继续加载。</span><span v-else>{{ $t("files.lonely") }}</span>
         </h2>
         <input
           style="display: none"
@@ -1428,6 +1428,7 @@ export default {
 </script>
 
 <style scoped>
+.listing-view-root:has(.works-pager) > .listing-items { flex-shrink: 0; }
 .listing-view-root {
   height: 100%;
   display: flex;

@@ -1,0 +1,4 @@
+import {it,expect} from 'vitest';import {PageWindow} from './pageWindow.js';
+const page=n=>({items:[{path:'/item'+n}],page:{cursor:'snapshot:'+n,previousCursor:n?'snapshot:'+(n-1):'',nextCursor:'snapshot:'+(n+1),index:n+1,total:100}});
+it('keeps adjacent pages bounded and can move back without losing identity',()=>{const w=new PageWindow(page(0),3);w.add(page(1),'next');w.add(page(2),'next');w.add(page(3),'next');expect(w.items.map(i=>i.path)).toEqual(['/item1','/item2','/item3']);expect(w.cursorFor('/item2')).toBe('snapshot:2');w.add(page(0),'previous');expect(w.items.map(i=>i.path)).toEqual(['/item0','/item1','/item2']);expect(w.pages.length).toBe(3)});
+it('refuses gaps and mixed snapshots',()=>{const w=new PageWindow(page(0));expect(()=>w.add(page(2),'next')).toThrow();expect(()=>w.add({...page(1),page:{...page(1).page,cursor:'other:1'}},'next')).toThrow();expect(w.items).toHaveLength(1)});

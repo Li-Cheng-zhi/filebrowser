@@ -1,0 +1,11 @@
+import {beforeEach,expect,it,vi} from 'vitest';
+const {bridgeMock}=vi.hoisted(()=>({bridgeMock:vi.fn().mockResolvedValue({})}));
+vi.mock('@/works/api.js',()=>({bridge:bridgeMock}));
+vi.mock('@/utils/constants',()=>({globalVars:{baseURL:'/',externalUrl:'',worksFiles:true}}));
+vi.mock('@/store',()=>({getters:{isShare:()=>false},mutations:{},state:{sessionId:'probe',shareInfo:{hash:''}}}));
+vi.mock('@/utils/metadataCache.js',()=>({invalidateDirMetadataCache:vi.fn()}));
+import {bulkDelete,moveCopy} from './resources.js';
+beforeEach(()=>{bridgeMock.mockClear();vi.stubGlobal('fetch',vi.fn())});
+it('reports a partial delete without inventing relocation or losing the successful result',async()=>{const result={succeeded:[{path:'/a'}],failed:[{path:'/b',message:'active Office'}]};fetch.mockResolvedValue({status:207,json:async()=>result});expect(await bulkDelete([{source:'s',path:'/a'},{source:'s',path:'/b'}])).toEqual(result);expect(bridgeMock.mock.calls.map(([x])=>x.action)).toEqual(['changed'])});
+it('renamed files update canonical tab identities only for successful operations',async()=>{const result={succeeded:[{oldCanonicalPath:'/root/a',canonicalPath:'/root/new'}],failed:[{message:'collision'}]};fetch.mockResolvedValue({status:207,json:async()=>result});expect(await moveCopy([{fromSource:'s',from:'/a',toSource:'s',to:'/new'}],'rename')).toEqual(result);expect(bridgeMock.mock.calls[0][0]).toEqual({action:'relocated',oldCanonicalPath:'/root/a',canonicalPath:'/root/new'});expect(bridgeMock.mock.calls.at(-1)[0].action).toBe('changed')});
+it('copies refresh directories without changing the source tab identity',async()=>{fetch.mockResolvedValue({status:200,json:async()=>({succeeded:[{oldCanonicalPath:'/a',canonicalPath:'/b'}]})});await moveCopy([{fromSource:'s',from:'/a',toSource:'s',to:'/b'}],'copy');expect(bridgeMock.mock.calls.map(([x])=>x.action)).toEqual(['changed'])});

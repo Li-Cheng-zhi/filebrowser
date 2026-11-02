@@ -16,10 +16,13 @@ import (
 var ErrPageExpired = errors.New("目录分页快照已失效，请刷新目录")
 
 type Page struct {
-	Items []json.RawMessage
-	Meta  map[string]json.RawMessage
-	Next  string
-	Total int
+	Items    []json.RawMessage
+	Meta     map[string]json.RawMessage
+	Next     string
+	Cursor   string
+	Previous string
+	Offset   int
+	Total    int
 }
 type directory struct {
 	key           string
@@ -57,6 +60,9 @@ func (p *Pages) Create(key string, items []json.RawMessage, meta map[string]json
 	return p.CreateOrder(key, items, meta, limit, "name", true)
 }
 func (p *Pages) CreateOrder(key string, items []json.RawMessage, meta map[string]json.RawMessage, limit int, field string, ascending bool) (Page, error) {
+	return p.CreateOrderAt(key, items, meta, limit, field, ascending, "")
+}
+func (p *Pages) CreateOrderAt(key string, items []json.RawMessage, meta map[string]json.RawMessage, limit int, field string, ascending bool, anchor string) (Page, error) {
 	if limit < 1 || limit > 1000 {
 		return Page{}, errors.New("pageSize 必须为 1—1000 的整数")
 	}
@@ -147,7 +153,16 @@ func (p *Pages) CreateOrder(key string, items []json.RawMessage, meta map[string
 	}
 	id := hex.EncodeToString(raw[:])
 	p.entries[id] = &directory{key: key, items: owned, meta: metadata, created: now, last: now, bytes: size}
-	return p.slice(id, 0, limit)
+	offset := 0
+	if anchor != "" {
+		for i, row := range rows {
+			if row.exact == anchor {
+				offset = i / limit * limit
+				break
+			}
+		}
+	}
+	return p.slice(id, offset, limit)
 }
 func (p *Pages) Next(key, cursor string, limit int) (Page, error) {
 	p.mu.Lock()
@@ -178,5 +193,13 @@ func (p *Pages) slice(id string, offset, limit int) (Page, error) {
 	if end < len(d.items) {
 		next = id + ":" + strconv.Itoa(end)
 	}
-	return Page{Items: d.items[offset:end], Meta: d.meta, Next: next, Total: len(d.items)}, nil
+	previous := ""
+	if offset > 0 {
+		at := offset - limit
+		if at < 0 {
+			at = 0
+		}
+		previous = id + ":" + strconv.Itoa(at)
+	}
+	return Page{Items: d.items[offset:end], Meta: d.meta, Next: next, Cursor: id + ":" + strconv.Itoa(offset), Previous: previous, Offset: offset, Total: len(d.items)}, nil
 }

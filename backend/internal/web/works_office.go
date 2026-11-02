@@ -1,6 +1,7 @@
 package web
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,10 @@ func worksOfficeConfig(r *http.Request, config map[string]interface{}, path stri
 	if mode == "review" && fileType != "docx" && fileType != "docm" && fileType != "doc" && fileType != "odt" {
 		return fmt.Errorf("该格式不支持正文修订审阅，可用模式为 view、edit")
 	}
-	if mode != "view" && editor["mode"] != "edit" {
+	if mode != "view" && fileType != "docx" && fileType != "xlsx" && fileType != "pptx" {
+		return fmt.Errorf("本次无损回写仅支持 DOCX、XLSX、PPTX；该格式可预览或另存原文件")
+	}
+	if mode != "view" && (editor["mode"] != "edit" || !worksSourceWritable(r.URL.Query().Get("source"))) {
 		return fmt.Errorf("该文件不可编辑")
 	}
 	owner := r.URL.Query().Get("owner")
@@ -46,7 +50,10 @@ func worksOfficeConfig(r *http.Request, config map[string]interface{}, path stri
 	if err != nil {
 		return err
 	}
-	worksOffice.Bind(session.Key, r.URL.Query().Get("source"), r.URL.Query().Get("path"))
+	if err = worksOffice.Bind(session.Key, r.URL.Query().Get("source"), r.URL.Query().Get("path")); err != nil {
+		_ = worksOffice.End(session.Key, owner, true)
+		return err
+	}
 	document["key"] = session.Key
 	query := url.Values{"key": {session.Key}}
 	document["url"] = onlyOfficeFileBrowserBaseURL(r) + "api/works/office/initial?" + query.Encode()
@@ -114,7 +121,7 @@ func worksOfficeCommand(w http.ResponseWriter, r *http.Request, d *Context) (int
 		return http.StatusNotFound, err
 	}
 	if input.Action == "saveAs" {
-		if session.Owner != input.Owner || session.Candidate == "" {
+		if (session.Mode != "view" && session.Owner != input.Owner) || (session.Mode != "view" && session.Candidate == "") {
 			return http.StatusConflict, errors.New("当前没有可另存的转换结果，请先完成保存转换")
 		}
 		if !strings.EqualFold(filepath.Ext(input.Path), filepath.Ext(session.Path)) {
@@ -130,7 +137,11 @@ func worksOfficeCommand(w http.ResponseWriter, r *http.Request, d *Context) (int
 		q.Set("path", input.Path)
 		u.RawQuery = q.Encode()
 		copy.URL = &u
-		return worksPublish(w, copy, d, input.Source, indexPath, real, session.Candidate)
+		candidate := session.Candidate
+		if session.Mode == "view" {
+			candidate = session.Initial
+		}
+		return worksPublish(w, copy, d, input.Source, indexPath, real, candidate)
 	}
 	if input.Action == "end" {
 		if err = worksOffice.End(input.Key, input.Owner, input.Discard); err != nil {
@@ -145,7 +156,7 @@ func worksOfficeCommand(w http.ResponseWriter, r *http.Request, d *Context) (int
 		}
 		return RenderJSON(w, r, state)
 	}
-	if input.Action != "save" && input.Action != "convert" {
+	if input.Action != "save" && input.Action != "convert" && input.Action != "convertOnly" {
 		return http.StatusBadRequest, fmt.Errorf("action 仅接受 save、convert、overwrite、saveAs、end")
 	}
 	if session.Owner != input.Owner {
@@ -154,7 +165,9 @@ func worksOfficeCommand(w http.ResponseWriter, r *http.Request, d *Context) (int
 	if session.Pending != "" {
 		return RenderJSON(w, r, session)
 	}
-	if input.Action == "convert" {
+	if input.Action == "convertOnly" {
+		session, err = worksOffice.RequestCopy(input.Key, input.Owner)
+	} else if input.Action == "convert" {
 		session, err = worksOffice.RequestLatest(input.Key, input.Owner)
 	} else {
 		session, err = worksOffice.Request(input.Key, input.Owner)
@@ -197,12 +210,23 @@ func worksOfficeCommand(w http.ResponseWriter, r *http.Request, d *Context) (int
 		return http.StatusBadGateway, err
 	}
 	if result.Error == 4 {
-		actual, e := workspace.Version(session.Path)
-		if session.Candidate == "" && (e != nil || actual != session.Base) {
-			worksOffice.Fail(input.Key, "磁盘版本已变化，请重新载入或另存，未覆盖原文件")
-			return http.StatusConflict, errors.New("磁盘版本已变化，请重新载入或另存，未覆盖原文件")
+		if session.Purpose == "copy" {
+			if err = worksOffice.CopyUnchanged(input.Key, session.Pending); err != nil {
+				worksOffice.Fail(input.Key, err.Error())
+				return http.StatusInternalServerError, err
+			}
+		} else if session.Candidate != "" {
+			if _, err = worksOffice.Commit(r.Context(), input.Key, session.Pending, session.Candidate); err != nil {
+				return http.StatusConflict, err
+			}
+		} else {
+			actual, e := workspace.Version(session.Path)
+			if e != nil || actual != session.Base {
+				worksOffice.Fail(input.Key, "磁盘版本已变化，请重新载入或另存")
+				return http.StatusConflict, errors.New("磁盘版本已变化，未覆盖原文件")
+			}
+			worksOffice.NoChanges(input.Key, session.Pending)
 		}
-		worksOffice.NoChanges(input.Key, session.Pending)
 	} else if result.Error != 0 {
 		message := fmt.Sprintf("文档服务器保存命令失败：%d", result.Error)
 		worksOffice.Fail(input.Key, message)
@@ -226,9 +250,50 @@ func worksOfficeCommit(w http.ResponseWriter, r *http.Request, data *OnlyOfficeC
 	if closeErr != nil {
 		return http.StatusInternalServerError, closeErr
 	}
+	if session, e := worksOffice.Get(data.Key); e == nil {
+		if e = worksValidateOfficeOutput(session.Path, name); e != nil {
+			worksOffice.RetainFailed(data.Key, name, e.Error())
+			return returnOnlyOfficeError(w, r, http.StatusConflict, e.Error())
+		}
+	}
 	_, err = worksOffice.Commit(r.Context(), data.Key, data.UserData, name)
+	if data.Status == onlyOfficeStatusDocumentClosedWithChanges {
+		// A crashed/disconnected editor has no host request to associate. Keep
+		// its complete converted candidate, then release the in-memory activity
+		// guard when the document server confirms every editor has left.
+		if session, e := worksOffice.Get(data.Key); e == nil {
+			_ = worksOffice.End(data.Key, session.Owner, true)
+		}
+		if errors.Is(err, workspace.ErrUnassociated) {
+			return returnOnlyOfficeSuccess(w, r)
+		}
+	}
 	if err != nil {
 		return returnOnlyOfficeError(w, r, http.StatusConflict, err.Error())
 	}
 	return returnOnlyOfficeSuccess(w, r)
+}
+
+func worksValidateOfficeOutput(original, candidate string) error {
+	required := map[string]string{".docx": "word/document.xml", ".xlsx": "xl/workbook.xml", ".pptx": "ppt/presentation.xml"}[strings.ToLower(filepath.Ext(original))]
+	if required == "" {
+		return errors.New("未启用该格式的原路径回写")
+	}
+	archive, err := zip.OpenReader(candidate)
+	if err != nil {
+		return errors.New("文档转换结果不完整或不是 OOXML，原文件未修改")
+	}
+	defer archive.Close()
+	for _, entry := range archive.File {
+		if entry.Name == required {
+			reader, e := entry.Open()
+			if e != nil {
+				return e
+			}
+			_, e = io.Copy(io.Discard, reader)
+			_ = reader.Close()
+			return e
+		}
+	}
+	return errors.New("文档转换格式与原扩展名不一致，原文件未修改")
 }

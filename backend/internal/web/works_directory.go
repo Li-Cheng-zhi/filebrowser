@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,13 @@ import (
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing"
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/settings"
 )
+
+var worksDirectoryFlights singleflight.Group
+
+type worksDirectoryResult struct {
+	page   workspace.Page
+	status int
+}
 
 var worksPages = workspace.NewPages()
 var worksTrash = &workspace.Trash{Files: worksFiles, Root: filepath.Join(worksRuntime(), "trash")}
@@ -62,39 +70,17 @@ func worksDirectoryGet(w http.ResponseWriter, r *http.Request, d *Context) (int,
 	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
 		page, err = worksPages.Next(key, cursor, limit)
 	} else {
-		// Reuse upstream permission checks, metadata shape and view grants. Only
-		// the immutable paging slice is new; there is no second filesystem reader.
-		copy := r.Clone(r.Context())
-		copy.Header = r.Header.Clone()
-		copy.Header.Del("Accept-Encoding")
-		urlCopy := *r.URL
-		q := urlCopy.Query()
-		q.Set("path", clean)
-		q.Del("content")
-		q.Del("metadata")
-		urlCopy.RawQuery = q.Encode()
-		copy.URL = &urlCopy
-		recorder := newWorksResponseBuffer()
-		status, e := resourceGetHandler(recorder, copy, d)
+		value, e, _ := worksDirectoryFlights.Do(key+fmt.Sprint(limit)+r.URL.Query().Get("anchor"), func() (any, error) {
+			page, status, err := worksBuildDirectory(r, d, clean, key, limit, order, ascending)
+			return worksDirectoryResult{page, status}, err
+		})
+		result := value.(worksDirectoryResult)
 		if e != nil {
-			return status, e
+			return result.status, e
 		}
-		var meta map[string]json.RawMessage
-		if e = json.Unmarshal(recorder.body.Bytes(), &meta); e != nil {
-			return http.StatusInternalServerError, e
-		}
-		var kind string
-		_ = json.Unmarshal(meta["type"], &kind)
-		if kind != "directory" {
-			return http.StatusBadRequest, fmt.Errorf("目标不是目录")
-		}
-		var folders, files []json.RawMessage
-		_ = json.Unmarshal(meta["folders"], &folders)
-		_ = json.Unmarshal(meta["files"], &files)
-		delete(meta, "folders")
-		delete(meta, "files")
-		page, err = worksPages.CreateOrder(key, append(folders, files...), meta, limit, order, ascending)
+		page = result.page
 	}
+
 	if err != nil {
 		if errors.Is(err, workspace.ErrPageExpired) {
 			return RenderJSON(w, r, map[string]any{"code": "DIRECTORY_REFRESH_REQUIRED", "message": err.Error()}, http.StatusGone)
@@ -118,7 +104,7 @@ func worksDirectoryGet(w http.ResponseWriter, r *http.Request, d *Context) (int,
 		}
 	}
 	out["folders"], out["files"] = folders, files
-	out["page"] = map[string]any{"nextCursor": page.Next, "total": page.Total, "complete": page.Next == ""}
+	out["page"] = map[string]any{"cursor": page.Cursor, "nextCursor": page.Next, "previousCursor": page.Previous, "index": page.Offset/limit + 1, "total": page.Total, "complete": page.Next == ""}
 	return RenderJSON(w, r, out)
 }
 
@@ -213,3 +199,49 @@ func newWorksResponseBuffer() *worksResponseBuffer {
 func (b *worksResponseBuffer) Header() http.Header            { return b.header }
 func (b *worksResponseBuffer) WriteHeader(status int)         { b.status = status }
 func (b *worksResponseBuffer) Write(data []byte) (int, error) { return b.body.Write(data) }
+
+func worksBuildDirectory(r *http.Request, d *Context, clean, key string, limit int, order string, ascending bool) (workspace.Page, int, error) {
+	// Reuse upstream permission checks, metadata shape and view grants. Only
+	// the immutable paging slice is new; there is no second filesystem reader.
+	copy := r.Clone(r.Context())
+	copy.Header = r.Header.Clone()
+	copy.Header.Del("Accept-Encoding")
+	urlCopy := *r.URL
+	q := urlCopy.Query()
+	q.Set("path", clean)
+	q.Del("content")
+	q.Del("metadata")
+	urlCopy.RawQuery = q.Encode()
+	copy.URL = &urlCopy
+	recorder := newWorksResponseBuffer()
+	status, e := resourceGetHandler(recorder, copy, d)
+	if e != nil {
+		return workspace.Page{}, status, e
+	}
+	var meta map[string]json.RawMessage
+	if e = json.Unmarshal(recorder.body.Bytes(), &meta); e != nil {
+		return workspace.Page{}, http.StatusInternalServerError, e
+	}
+	var kind string
+	_ = json.Unmarshal(meta["type"], &kind)
+	if kind != "directory" {
+		return workspace.Page{}, http.StatusBadRequest, fmt.Errorf("目标不是目录")
+	}
+	info, err := files.FileInfoFaster(utils.FileOptions{Source: r.URL.Query().Get("source"), Path: clean, FollowSymlinks: true}, d.User)
+	if err != nil {
+		return workspace.Page{}, ErrToStatus(err), err
+	}
+	canonical, err := workspace.Canonical(info.RealPath)
+	if err != nil {
+		return workspace.Page{}, ErrToStatus(err), err
+	}
+	meta["canonicalPath"], _ = json.Marshal(canonical)
+	var folders, files []json.RawMessage
+	_ = json.Unmarshal(meta["folders"], &folders)
+	_ = json.Unmarshal(meta["files"], &files)
+	delete(meta, "folders")
+	delete(meta, "files")
+	page, err := worksPages.CreateOrderAt(key, append(folders, files...), meta, limit, order, ascending, r.URL.Query().Get("anchor"))
+	return page, http.StatusBadRequest, err
+
+}

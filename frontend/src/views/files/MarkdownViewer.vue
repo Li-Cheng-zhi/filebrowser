@@ -47,6 +47,7 @@ import { Marked } from "marked";
 import DOMPurify from 'dompurify';
 import { state, mutations, getters } from "@/store";
 import { createScrollSyncGuard } from "@/utils/markdownScrollSync";
+import { mathExtensions,copyMathSource } from '@/works/math.js';
 import { copyToClipboard } from "@/utils/clipboard";
 import { globalVars } from "@/utils/constants";
 import { isHtmlMimeType } from "@/utils/mimetype";
@@ -104,86 +105,14 @@ function loadHighlightCss(variant: "light" | "dark"): Promise<string> {
 const MD_SANITIZE_CONFIG = { USE_PROFILES: { html: true, mathMl: true }, ADD_TAGS: ["semantics", "annotation"] };
 
 const marked = new Marked({ gfm: true });
-marked.use({
-  extensions: [{
-    name: "blockMathInterrupt",
-    level: "block",
-    start(src: string) {
-      const m = src.match(/\n\${1,2}[ \t]*(?:\n|$)/);
-      return m ? m.index : undefined;
-    },
-    tokenizer() { return undefined; },
-  }],
-});
-
-// Lazy load temml (math + chemistry) -- so md files that don't have math/chemistry notation simply will not load temml
-// making the file load more faster, similar thing to the async components.
-const MATH_PATTERN = /\$\$[\s\S]+?\$\$|\$[^\s$][^$\n]*\$/;
-const INLINE_MATH_RULE = /^(\${1,2})(?!\$)((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\1(?=[\s?!.,:？！。，：]|$)/;
-const BLOCK_MATH_RULE = /^(\${1,2})\n((?:\\[\s\S]|[^\\])+?)\n\1(?:\n|$)/;
-function contentHasMath(content: string): boolean {
-  return MATH_PATTERN.test(content);
-}
+function contentHasMath(content: string): boolean {return content.includes('$')||content.includes('\\(')||content.includes('\\[');}
 let mathLoaded = false;
 let mathPromise: Promise<void> | null = null;
 function loadMath(): Promise<void> {
   if (mathLoaded) return Promise.resolve();
   if (mathPromise === null) {
     mathPromise = import("temml").then(({ default: temml }) => {
-      const renderMath = (token: { text?: string; displayMode?: boolean }, newlineAfter: boolean) =>
-        temml.renderToString(token.text ?? "", { throwOnError: false, displayMode: Boolean(token.displayMode) }) + (newlineAfter ? "\n" : "");
-      marked.use({
-        extensions: [
-          {
-            name: "inlineMath",
-            level: "inline",
-            start(src: string) {
-              let indexSrc = src;
-              while (indexSrc) {
-                const index = indexSrc.indexOf("$");
-                if (index === -1) return undefined;
-                if (index === 0 || indexSrc.charAt(index - 1) === " ") {
-                  if (INLINE_MATH_RULE.test(indexSrc.substring(index))) {
-                    return index;
-                  }
-                }
-                indexSrc = indexSrc.substring(index + 1).replace(/^\$+/, "");
-              }
-              return undefined;
-            },
-            tokenizer(src: string) {
-              const match = src.match(INLINE_MATH_RULE);
-              if (!match?.[1] || !match[2]) return undefined;
-              return {
-                type: "inlineMath",
-                raw: match[0],
-                text: match[2].trim(),
-                displayMode: match[1].length === 2,
-              };
-            },
-            renderer(token) {
-              return renderMath(token as { text?: string; displayMode?: boolean }, false);
-            },
-          },
-          {
-            name: "blockMath",
-            level: "block",
-            tokenizer(src: string) {
-              const match = src.match(BLOCK_MATH_RULE);
-              if (!match?.[1] || !match[2]) return undefined;
-              return {
-                type: "blockMath",
-                raw: match[0],
-                text: match[2].trim(),
-                displayMode: match[1].length === 2,
-              };
-            },
-            renderer(token) {
-              return renderMath(token as { text?: string; displayMode?: boolean }, true);
-            },
-          },
-        ],
-      });
+      marked.use({extensions:mathExtensions(temml)});
       mathLoaded = true;
     }).catch((err) => {
       console.error("Failed to load temml:", err);
@@ -364,7 +293,9 @@ watch(() => props.scrollTarget, (newEl) => {
   }
 });
 
+function onSourceCopy(event: ClipboardEvent){copyMathSource(event,viewerEl.value);}
 onMounted(async () => {
+ document.addEventListener("copy",onSourceCopy);
   reinit();
   observeResize();
   await nextTick();
@@ -379,6 +310,7 @@ onBeforeUnmount(() => {
 });
 
 onUnmounted(() => {
+ document.removeEventListener("copy",onSourceCopy);
   htmlPreviewLoader.dispose();
   attachScrollListener(null);
   unobserveResize();

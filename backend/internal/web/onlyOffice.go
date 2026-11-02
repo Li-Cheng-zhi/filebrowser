@@ -540,7 +540,18 @@ func processOnlyOfficeCallback(w http.ResponseWriter, r *http.Request, d *Contex
 	path = cleanPath
 
 	if err := validateOnlyOfficeCallbackKey(source, path, user, data); err != nil {
+		// Explicit host close already retired its session after a confirmed save.
+		// These signed lifecycle notifications cannot write file content.
+		if worksEnabled() && (data.Status == onlyOfficeStatusDocumentClosedWithChanges || data.Status == onlyOfficeStatusDocumentClosedWithNoChanges) {
+			return returnOnlyOfficeSuccess(w, r)
+		}
 		return returnOnlyOfficeError(w, r, 400, err.Error())
+	}
+	if worksEnabled() && data.Status == onlyOfficeStatusDocumentClosedWithNoChanges {
+		if session, e := worksOffice.Get(data.Key); e == nil {
+			_ = worksOffice.End(data.Key, session.Owner, true)
+		}
+		return returnOnlyOfficeSuccess(w, r)
 	}
 
 	// Handle document closure - clean up document key cache
@@ -928,6 +939,9 @@ func validateOnlyOfficeCallbackKey(source, path string, user *users.User, data *
 	}
 	if worksEnabled() {
 		session, err := worksOffice.Get(data.Key)
+		if err != nil {
+			session, err = worksOffice.Record(data.Key)
+		}
 		if err != nil {
 			return err
 		}

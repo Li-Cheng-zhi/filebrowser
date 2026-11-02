@@ -2,6 +2,7 @@
   <div>
     <div v-if="loadingProgress < 100" class="progress-line" :style="{ width: `${loadingProgress}%`, ...moveWithSidebar }"></div>
     <div v-if="error?.status===410" class="message"><p>目录快照已失效，请刷新目录后重新翻页。</p><button @click="refreshWorks">刷新目录</button></div>
+    <div v-else-if="error?.status===404 && worksFiles" class="message"><p>当前路径已不存在。文件内容不会被自动创建或覆盖。</p><button @click="openExistingParent">打开仍存在的父目录</button></div>
     <errors v-else-if="error" :errorCode="error.status" />
     <component v-else-if="currentViewLoaded" :is="currentView" :fbdata="req"></component>
     <div v-else>
@@ -136,6 +137,7 @@ export default {
   data() {
     return {
       error: null,
+      worksFiles: globalVars.worksFiles,
       width: window.innerWidth,
       lastPath: "",
       popupSource: "",
@@ -144,6 +146,7 @@ export default {
       loadingTimeout: null,
       // Share-specific data
       sharePassword: "",
+      fetchGeneration: 0,
       attemptedPasswordLogin: false,
       lastShareHash: "",
     };
@@ -228,6 +231,7 @@ export default {
     mutations.replaceRequest({}); // Use mutation
   },
   methods: {
+    async openExistingParent(){const result=extractSourceFromPath(this.$route.path);const source=decodeURIComponent(result.source);let path=decodeURIComponent(result.path).replace(/\/$/,'');while(path&&path!=='/'){path=removeLastDir(path)||'/';try{await directoryPage(source,path);const query={frefresh:String(Date.now())};await router.replace({path:`/files/${encodeURIComponent(source)}${path.replace(/\/$/,'')}/`,query});return}catch(e){if(e.status!==404){this.error=e;return}}}this.error={status:404};},
     async refreshWorks(){const query={...this.$route.query};delete query.fcursor;delete query.fpage;query.frefresh=String(Date.now());await router.replace({path:this.$route.path,query})},
     selectAndScroll(name, replaceSelection = false) {
       const index = state.req?.items?.findIndex((item) => item.name === name) ?? -1;
@@ -293,6 +297,7 @@ export default {
     },
 
     async fetchData() {
+ const generation=++this.fetchGeneration;
       const hash = getters.shareHash();
       const isShare = hash !== "";
 
@@ -485,6 +490,7 @@ export default {
           const fetchPath = decodeURIComponent(result.path);
 
           const res = await fetchAuthItemWithParent(fetchSource, fetchPath);
+ if(generation!==this.fetchGeneration)return;
           if(globalVars.worksFiles && res.type!=='directory'){
             if(window.cefQuery){await openItem(fetchSource,fetchPath);await router.replace(`/files/${encodeURIComponent(fetchSource)}${removeLastDir(fetchPath)}/`)}else{await router.replace(fileURL(fetchSource,fetchPath))}
             this.loadingProgress=100;return;
@@ -502,11 +508,14 @@ export default {
         }
 
       } catch (e) {
+ if(generation!==this.fetchGeneration)return;
         this.error = e;
         mutations.replaceRequest({});
         this.loadingProgress = 0;
 
-        if (e.status === 404) {
+        if (e.status === 404 && globalVars.worksFiles && !isShare) {
+          return;
+        } else if (e.status === 404) {
           void router.push({ name: "notFound" });
         } else if (e.status === 403) {
           void router.push({ name: "forbidden" });

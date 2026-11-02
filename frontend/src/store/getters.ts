@@ -263,6 +263,7 @@ export const getters = {
       return 0
     }
     for (const item of state.req.items) {
+ if(state.req.worksFilter && !item.name.toLocaleLowerCase().includes(state.req.worksFilter.toLocaleLowerCase()))continue;
       // Check if the item is a directory
       if (item.type === 'directory') {
         // Otherwise, count this directory
@@ -295,6 +296,7 @@ export const getters = {
     if (!state.req?.items) return { pinned, dirs, files };
 
     for (const item of state.req.items) {
+ if(state.req.worksFilter&&!item.name.toLocaleLowerCase().includes(state.req.worksFilter.toLocaleLowerCase()))continue;
       if (item.pinned) {
         pinned.push(item);
         continue;

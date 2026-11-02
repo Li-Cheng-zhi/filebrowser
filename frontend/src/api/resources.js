@@ -256,7 +256,7 @@ export async function bulkDelete(items) {
     const data = await response.json()
     // 200 = all succeeded, 207 = partial success (some succeeded, some failed)
     if (response.status === 200 || response.status === 207) {
-      if(globalVars.worksFiles){for(const item of data.succeeded||[]){if(action!=='copy')await bridge({action:'relocated',oldCanonicalPath:item.oldCanonicalPath,canonicalPath:item.canonicalPath});}await bridge({action:'changed'});}
+      if(globalVars.worksFiles)await bridge({action:'changed'}).catch(console.warn);
 
       for (const item of items) {
         invalidateDirMetadataCache({ source: item.source, path: getParentDir(item.path) })
@@ -995,6 +995,7 @@ export async function moveCopy(
 
     // 200 = all succeeded, 207 = partial success (some succeeded, some failed)
     if (response.status === 200 || response.status === 207) {
+      if(globalVars.worksFiles){for(const item of data.succeeded||[]){if(action!=='copy')await bridge({action:'relocated',oldCanonicalPath:item.oldCanonicalPath,canonicalPath:item.canonicalPath}).catch(console.warn);}await bridge({action:'changed'}).catch(console.warn);}
       for (const item of items) {
         invalidateDirMetadataCache({ source: item.fromSource, path: getParentDir(item.from) })
         invalidateDirMetadataCache({ source: item.toSource, path: getParentDir(item.to) })

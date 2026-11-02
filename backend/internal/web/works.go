@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/files"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/utils"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/workspace"
+	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing/iteminfo"
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/settings"
 )
 
@@ -47,7 +49,7 @@ func worksFileGet(w http.ResponseWriter, r *http.Request, d *Context) (int, erro
 		return ErrToStatus(err), err
 	}
 	if r.URL.Query().Get("metadata") == "true" {
-		return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "type": info.Type})
+		return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "type": info.Type, "modes": worksModes(info.RealPath, perms.Modify && worksSourceWritable(source))})
 	}
 	file, err := os.Open(canonical)
 	if err != nil {
@@ -73,7 +75,8 @@ func worksFileGet(w http.ResponseWriter, r *http.Request, d *Context) (int, erro
 		return http.StatusUnsupportedMediaType, fmt.Errorf("当前仅无损编辑 UTF-8 文本，原文件未修改")
 	}
 	hash := sha256.Sum256(data)
-	return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "version": hex.EncodeToString(hash[:]), "text": string(data), "bytes": len(data), "encoding": "utf-8"})
+	editable, reason := worksTextEditable(data)
+	return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "version": hex.EncodeToString(hash[:]), "text": string(data), "bytes": len(data), "encoding": "utf-8", "editable": editable, "editLimitReason": reason})
 }
 
 func worksResolve(w http.ResponseWriter, r *http.Request, d *Context) (int, error) {
@@ -164,4 +167,40 @@ func worksPut(w http.ResponseWriter, r *http.Request, d *Context, source, indexP
 	}
 	w.Header().Set("ETag", "\""+version+"\"")
 	return RenderJSON(w, r, map[string]any{"version": version, "canonicalPath": path, "saved": true})
+}
+
+func worksModes(path string, modify bool) []string {
+	modes := []string{"view"}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	office := iteminfo.IsOnlyOffice(path) && ext != "csv"
+	if !modify || (office && (settings.Config.Integrations.OnlyOffice.ViewOnly || (ext != "docx" && ext != "xlsx" && ext != "pptx"))) {
+		return modes
+	}
+	modes = append(modes, "edit")
+	if office && (ext == "docx" || ext == "docm" || ext == "doc" || ext == "odt") {
+		modes = append(modes, "review")
+	}
+	return modes
+}
+
+func withWorks(fn handleFunc) http.HandlerFunc {
+	return withUser(func(w http.ResponseWriter, r *http.Request, d *Context) (int, error) {
+		if !worksEnabled() {
+			return http.StatusNotImplemented, fmt.Errorf("Works 文件接口未启用")
+		}
+		return fn(w, r, d)
+	})
+}
+
+func worksTextEditable(data []byte) (bool, string) {
+	rest := bytes.ReplaceAll(data, []byte("\r\n"), nil)
+	if bytes.ContainsRune(rest, '\r') || (bytes.Contains(data, []byte("\r\n")) && bytes.ContainsRune(rest, '\n')) {
+		return false, "该文本包含混合换行或 CR 换行，当前仅预览，避免编辑时隐式改写换行。"
+	}
+	return true, ""
+}
+
+func worksSourceWritable(source string) bool {
+	_, err := denyIfSourceReadOnly(source)
+	return err == nil
 }

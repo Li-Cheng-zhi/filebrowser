@@ -115,7 +115,7 @@ export default {
       return !state.contextMenuHasItems && !getters.isPreviewView();
     },
     showSearch() {
-      return getters.isLoggedIn() && getters.currentView() === "listingView" && !getters.isShare();
+      return !window.globalVars?.worksFiles && getters.isLoggedIn() && getters.currentView() === "listingView" && !getters.isShare();
     },
     isSearchActive() {
       return state.isSearchActive;

@@ -19,7 +19,8 @@ export interface FileListItem {
 }
 
 export interface ReqObject {
- page?: {nextCursor: string;total:number;complete:boolean};
+ worksFilter?: string;
+ page?: {cursor:string;nextCursor: string;previousCursor:string;index:number;total:number;complete:boolean};
   // Base properties always present
   sorting: {
     by: string;

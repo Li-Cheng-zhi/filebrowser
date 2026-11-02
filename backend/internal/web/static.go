@@ -481,7 +481,7 @@ func staticAssetHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if gzipped version exists
 	if strings.HasSuffix(assetPath, ".js") || strings.HasSuffix(assetPath, ".woff2") {
 		gzPath := assetPath + ".gz"
-		fileContents, err = fs.ReadFile(assetFs, gzPath)
+		fileContents, err = worksReadAsset(gzPath)
 		if err == nil {
 			// Gzipped version exists, serve it
 			setContentType(w, assetPath)
@@ -495,7 +495,7 @@ func staticAssetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Serve uncompressed version
-	fileContents, err = fs.ReadFile(assetFs, assetPath)
+	fileContents, err = worksReadAsset(assetPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -513,4 +513,17 @@ func indexHandler(w http.ResponseWriter, r *http.Request, d *requestContext) (in
 		return http.StatusNotFound, nil
 	}
 	return handleWithStaticData(w, r, d, "index.html", "text/html")
+}
+
+// Hashed assets from an earlier release remain available for already-open pages.
+// Only assets/fonts are served; no arbitrary runtime file is addressable here.
+func worksReadAsset(path string) ([]byte, error) {
+	data, err := fs.ReadFile(assetFs, path)
+	if err == nil || !worksEnabled() {
+		return data, err
+	}
+	if !fs.ValidPath(path) || (!strings.HasPrefix(path, "assets/") && !strings.HasPrefix(path, "fonts/")) {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(worksRuntime(), "frontend-assets", filepath.FromSlash(path)))
 }
