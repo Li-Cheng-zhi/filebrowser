@@ -16,7 +16,6 @@ import (
 	"github.com/gtsteffaniak/filebrowser/backend/internal/adapters/fs/files"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/utils"
 	"github.com/gtsteffaniak/filebrowser/backend/internal/workspace"
-	"github.com/gtsteffaniak/filebrowser/backend/pkg/indexing/iteminfo"
 	"github.com/gtsteffaniak/filebrowser/backend/pkg/settings"
 )
 
@@ -49,7 +48,7 @@ func worksFileGet(w http.ResponseWriter, r *http.Request, d *Context) (int, erro
 		return ErrToStatus(err), err
 	}
 	if r.URL.Query().Get("metadata") == "true" {
-		return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "type": info.Type, "modes": worksModes(info.RealPath, perms.Modify && worksSourceWritable(source))})
+		return RenderJSON(w, r, map[string]any{"canonicalPath": canonical, "source": source, "path": clean, "type": info.Type, "office": worksOfficeFile(info.RealPath), "modes": worksModes(info.RealPath, perms.Modify && worksSourceWritable(source))})
 	}
 	file, err := os.Open(canonical)
 	if err != nil {
@@ -169,10 +168,22 @@ func worksPut(w http.ResponseWriter, r *http.Request, d *Context, source, indexP
 	return RenderJSON(w, r, map[string]any{"version": version, "canonicalPath": path, "saved": true})
 }
 
+// Office routing is narrower than ONLYOFFICE's import-format list: plain
+// text (MD/TXT/XML/CSV/HTML) belongs to Monaco even if Docs can import it.
+func worksOfficeFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".doc", ".docx", ".docm", ".dot", ".dotx", ".odt", ".rtf",
+		".xls", ".xlsx", ".xlsm", ".xltx", ".ods",
+		".ppt", ".pptx", ".pptm", ".odp", ".ppsx":
+		return true
+	}
+	return false
+}
+
 func worksModes(path string, modify bool) []string {
 	modes := []string{"view"}
 	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
-	office := iteminfo.IsOnlyOffice(path) && ext != "csv"
+	office := worksOfficeFile(path)
 	if !modify || (office && (settings.Config.Integrations.OnlyOffice.ViewOnly || (ext != "docx" && ext != "xlsx" && ext != "pptx"))) {
 		return modes
 	}
