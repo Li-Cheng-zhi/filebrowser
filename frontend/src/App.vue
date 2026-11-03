@@ -3,15 +3,18 @@
 </template>
 
 <script>
-import { onMounted } from "vue";
-import { mutations } from "@/store"; // Import your store's mutations
+import { onMounted, watchEffect } from "vue";
+import { mutations, getters } from "@/store"; // Import your store's mutations
 import { scheduleFullIcons } from "@/utils/loadFullIcons";
+import { syncDocumentTheme } from "@/utils/theme";
 
 mutations.setLoading("main-app", true);
 export default {
   name: "app",
   computed: {},
   setup() {
+    // Own the document theme for every route, including standalone file pages.
+    watchEffect(() => syncDocumentTheme(getters.isDarkMode()));
     onMounted(async () => {
       if (document.fonts?.load) {
         try {

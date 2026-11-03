@@ -368,9 +368,12 @@ function handleContainerResize() {
   }
 }
 
+let highlightThemeRevision = 0;
 async function setHighlightTheme(isDark: boolean) {
+  const revision = ++highlightThemeRevision;
   const THEME_STYLE_ID = "highlight-theme-style";
   const themeMode = await loadHighlightCss(isDark ? "dark" : "light");
+  if (revision !== highlightThemeRevision) return;
   const nonce =
     typeof globalVars.cspNonce === "string" && globalVars.cspNonce !== ""
       ? globalVars.cspNonce

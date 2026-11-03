@@ -49,7 +49,7 @@ import { state, getters, mutations } from "@/store";
 import { events, notify } from "@/notify";
 import { generateRandomCode } from "@/utils/auth";
 import { globalVars } from "@/utils/constants";
-import { syncDocumentTheme, syncEventTheme } from "@/utils/theme";
+import { syncEventTheme } from "@/utils/theme";
 import Search from "@/components/Search.vue";
 
 export default {
@@ -173,12 +173,6 @@ export default {
   watch: {
     $route() {
       this.reEval()
-    },
-    isDarkMode: {
-      immediate: true,
-      handler(dark) {
-        syncDocumentTheme(dark);
-      },
     },
   },
   methods: {

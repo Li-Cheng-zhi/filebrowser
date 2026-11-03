@@ -227,7 +227,7 @@ import { initAuth } from "@/utils/auth";
 import { postLoginRedirectForServer, sanitizePostLoginRedirect } from "@/utils/safeRedirect.js";
 import { globalVars } from "@/utils/constants";
 import { evaluatePasswordPolicy } from "@/utils/passwordPolicy.js";
-import { defaultDarkMode, syncDocumentTheme } from "@/utils/theme";
+import { defaultDarkMode } from "@/utils/theme";
 import HelpTooltipIcon from "@/components/HelpTooltipIcon.vue";
 import Tooltip from "@/components/Tooltip.vue";
 import LoadingSpinner from "@/components/LoadingSpinner.vue";
@@ -314,7 +314,6 @@ export default {
     },
   },
   mounted() {
-    syncDocumentTheme(this.isDarkMode);
     if (state.route.query.redirect) {
       const safeRedirect = sanitizePostLoginRedirect(state.route.query.redirect);
       const redirect = postLoginRedirectForServer(safeRedirect, globalVars.baseURL);
