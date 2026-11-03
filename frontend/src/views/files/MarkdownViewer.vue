@@ -1115,7 +1115,7 @@ function applyScrollRatio(line: number) {
   min-width: 44px;
   max-width: 232px;
   word-break: normal;
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
 }
 
 #markedown-viewer .markdown-content th {
