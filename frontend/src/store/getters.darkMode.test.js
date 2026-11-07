@@ -41,6 +41,35 @@ vi.mock('@/utils/object.js', () => ({
 
 import { getters } from './getters.ts';
 
+describe('sidebar opens only on explicit request', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [false, false], [false, true], [true, false], [true, true],
+  ])('ignores viewport mobile=%s and persisted sticky=%s when closed', (mobile, sticky) => {
+    stateMock.user = { username: 'anonymous', stickySidebar: sticky };
+    stateMock.showSidebar = false;
+    globalVarsMock.disableSidebar = false;
+    vi.spyOn(getters, 'isMobile').mockReturnValue(mobile);
+    vi.spyOn(getters, 'isInvalidShare').mockReturnValue(false);
+    vi.spyOn(getters, 'currentView').mockReturnValue('listingView');
+    vi.spyOn(getters, 'currentPromptName').mockReturnValue('');
+    expect(getters.isSidebarVisible()).toBe(false);
+    stateMock.showSidebar = true;
+    expect(getters.isSidebarVisible()).toBe(true);
+    stateMock.showSidebar = false;
+    expect(getters.isSidebarVisible()).toBe(false);
+  });
+
+  it('keeps a menu entry for reopening settings navigation on desktop', () => {
+    vi.spyOn(getters, 'isSidebarVisible').mockReturnValue(false);
+    vi.spyOn(getters, 'currentView').mockReturnValue('settings');
+    vi.spyOn(getters, 'isMobile').mockReturnValue(false);
+    vi.spyOn(getters, 'isShare').mockReturnValue(false);
+    expect(getters.multibuttonState()).toBe('menu');
+  });
+});
+
 describe('getters.isDarkMode logged-out behavior', () => {
   beforeEach(() => {
     stateMock.user = { username: '', darkMode: true, locale: 'en' };

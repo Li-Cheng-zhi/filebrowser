@@ -220,7 +220,7 @@ export default {
     performNavigation(cv) {
       if (cv === "listingView" || ( getters.isShare() && getters.multibuttonState() !== "close") || cv === "tools") {
         mutations.toggleSidebar();
-      } else if (cv === "settings" && getters.isMobile()) {
+      } else if (cv === "settings" && (getters.isMobile() || !getters.isSidebarVisible())) {
         mutations.toggleSidebar();
       } else {
         mutations.closeHovers();

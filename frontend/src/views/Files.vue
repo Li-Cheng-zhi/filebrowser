@@ -419,10 +419,6 @@ export default {
           mutations.resetSelected();
           mutations.setMultiple(false);
 
-          if (state.shareInfo?.singleFileShare) {
-            mutations.setSidebarVisible(true);
-          }
-
           this.loadingProgress = 10;
           const file = await fetchShareItemWithParent(this.sharePassword);
           mutations.replaceRequest(file);

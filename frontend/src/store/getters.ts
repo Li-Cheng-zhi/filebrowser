@@ -319,7 +319,8 @@ export const getters = {
     if (cv === 'onlyOfficeEditor') {
       return false
     }
-    let visible = (state.showSidebar || getters.isStickySidebar())
+    // Sticky controls layout after opening; only an explicit user action opens it.
+    let visible = state.showSidebar
     if (getters.currentPromptName() && !getters.isStickySidebar()) {
       visible = false
     }
@@ -640,9 +641,7 @@ export const getters = {
       return "menu";
     }
     if (cv === "settings") {
-      if (getters.isMobile()) {
-        return "menu";
-      }
+      return "menu";
     }
     if (cv === "listingView") {
       return "menu";
