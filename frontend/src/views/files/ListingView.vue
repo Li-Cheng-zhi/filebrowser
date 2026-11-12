@@ -1,6 +1,6 @@
 <template>
   <div v-if="shareInfo.shareType !== 'upload'" class="listing-view-root no-select" :style="containerStyles">
-    <DirectoryPager v-if="req.page" :page="req.page" />
+    <component :is="hostChromeEnabled($route) ? 'HostedDirectoryPager' : 'DirectoryPager'" v-if="req.page" :page="req.page" />
     <!-- Show loading spinner while loading OR if we haven't loaded any data yet -->
     <div v-if="loading">
       <h2 class="message delayed">
@@ -190,6 +190,8 @@
 
 <script>
 import DirectoryPager from '@/works/DirectoryPager.vue';
+import HostedDirectoryPager from '@/works/HostedDirectoryPager.vue';
+import { hostChromeEnabled } from '@/works/hostChrome.js';
 import downloadFiles from "@/utils/download";
 import { resourcesApi } from "@/api";
 import { router } from "@/router";
@@ -211,6 +213,7 @@ export default {
   name: "listingView",
   components: {
     DirectoryPager,
+    HostedDirectoryPager,
     Item,
     Upload,
     LoadingSpinner,
@@ -564,6 +567,7 @@ export default {
     this.$el.removeEventListener("drop", this.drop);
   },
   methods: {
+    hostChromeEnabled,
     handleGlobalDragEnd() {
       // Reset drag state for all items (replaces per-item dragend listeners)
       const items = this.$el?.querySelectorAll('.listing-item.drag-hover, .listing-item.half-selected');

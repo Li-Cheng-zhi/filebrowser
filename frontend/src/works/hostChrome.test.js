@@ -1,0 +1,85 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// A scoped upstream renderer catches adapter regressions without mocking the adapter itself.
+vi.mock('./FilePage.vue', async () => {
+  const { h } = await import('vue');
+  return { default: {
+    __scopeId: 'data-v-upstream-file',
+    data: () => ({ loaded: true, busy: false, canonical: '/a/file.txt', source: 'home', path: '/a/file.txt',
+      status: 'saved', message: '', office: false, officeDirty: false, textFile: true, mode: 'edit', right: false,
+      modes: [{ value: 'view' }, { value: 'edit' }], saver: { dirty: false }, saves: 0 }),
+    render() { return h('main', { class: 'upstream-file-body' }, 'upstream renderer'); },
+    mounted() { window.worksFilesHost = { relocate: async () => {} }; return Promise.resolve(); },
+    beforeUnmount() { delete window.worksFilesHost; },
+    beforeRouteLeave() { this.guardCalled = true; return false; },
+    methods: { publish() {}, save() { this.saves++; }, switchMode() {}, reload() {}, saveAs() {}, openMain() {} },
+  } };
+});
+
+async function chrome(url = '/works/file?worksChrome=1&worksPage=doc-1') {
+  history.replaceState(null, '', url);
+  vi.resetModules();
+  return import('./hostChrome.js');
+}
+
+afterEach(() => { delete window.worksFilesHost; document.documentElement.classList.remove('works-hosted-chrome'); });
+
+describe('resource host chrome', () => {
+  it('requires an explicit hosted document rather than the availability of cefQuery', async () => {
+    const module = await chrome('/works/file');
+    window.cefQuery = vi.fn();
+    expect(module.hostChromeEnabled({ query: {} })).toBe(false);
+    expect(module.activateHostChrome()).toBe(false);
+    expect(module.hostRequest({ action: 'identity' })).toEqual({ action: 'identity' });
+    delete window.cefQuery;
+  });
+  it('retains one document identity across directory SPA navigation and ignores a spoofed key', async () => {
+    const module = await chrome('/files/home/a/?worksChrome=1&worksPage=doc-1');
+    history.replaceState(null, '', '/files/home/b/');
+    expect(module.hostChromeEnabled({ query: {} })).toBe(true);
+    expect(module.hostRequest({ action: 'navigation', documentKey: 'stale' }).documentKey).toBe('doc-1');
+    expect(module.activateHostChrome()).toBe(true);
+  });
+  it('routes commands to existing operations, publishes after completion and reports failure', async () => {
+    const { attachHostCommands } = await chrome();
+    const host = {}; const publish = vi.fn(); const error = vi.fn();
+    const save = vi.fn(async () => { throw new Error('磁盘版本冲突'); });
+    attachHostCommands(host, { save }, publish, error);
+    await host.runCommand('save');
+    expect(save).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith('磁盘版本冲突');
+    expect(publish).toHaveBeenCalledOnce();
+  });
+  it('does not remove the bridge registration of a newer mounted page', async () => {
+    const { cleanHost } = await chrome(); const older = {}; const newer = {};
+    window.worksFilesHost = newer;
+    cleanHost(older, () => { delete window.worksFilesHost; });
+    expect(window.worksFilesHost).toBe(newer);
+    cleanHost(newer, () => { delete window.worksFilesHost; });
+    expect(window.worksFilesHost).toBeUndefined();
+  });
+  it('publishes actual file permissions and Office review capability, preserving right-side read-only mode', async () => {
+    const { fileChromeState } = await chrome();
+    const page = { loaded: true, busy: false, canonical: '/a/doc.docx', source: 'home', path: '/a/doc.docx',
+      status: 'dirty', message: '', office: true, officeDirty: true, mode: 'review',
+      modes: [{ value: 'view' }, { value: 'edit' }, { value: 'review' }], right: false };
+    expect(fileChromeState(page)).toMatchObject({ ready: true, dirty: true, mode: 'review', modes: ['view', 'edit', 'review'], saveAs: true });
+    expect(fileChromeState({ ...page, right: true })).toMatchObject({ modes: [], saveAs: false });
+  });
+  it('keeps the upstream scoped renderer and invokes its save and route-leave contracts', async () => {
+    await chrome();
+    const { createApp, nextTick } = await import('vue');
+    const factory = (await import('./HostedFilePage.vue')).default;
+    const target = document.createElement('div'); document.body.append(target);
+    const app = createApp(factory);
+    app.config.globalProperties.$route = { query: { source: 'home', path: '/a/file.txt', worksChrome: '1' } };
+    const vm = app.mount(target); await nextTick();
+    expect(target.querySelector('.upstream-file-body')?.hasAttribute('data-v-upstream-file')).toBe(true);
+    await window.worksFilesHost.runCommand('save');
+    expect(vm.$refs.page.saves).toBe(1);
+    expect(await factory.beforeRouteLeave.call(vm, { name: 'Settings' }, {})).toBe(false);
+    expect(vm.$refs.page.guardCalled).toBe(true);
+    app.unmount(); target.remove();
+    expect(window.worksFilesHost).toBeUndefined();
+  });
+});

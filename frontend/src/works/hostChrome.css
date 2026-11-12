@@ -1,0 +1,43 @@
+/* Hosted-only geometry, baseline FilePage/Layout/Shelf/ListingView at Quantum 3d0e705edf75. */
+html.works-hosted-chrome .works-file > header,
+html.works-hosted-chrome header.flexbar,
+html.works-hosted-chrome #breadcrumbs {
+  display: none !important;
+}
+html.works-hosted-chrome .works-file .busy { inset: 0; }
+html.works-hosted-chrome #main {
+  padding-top: 0 !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+}
+html.works-hosted-chrome #shelf { position: sticky !important; top: 0 !important; left: 0 !important; right: auto !important; padding: 0.25em 0.5em; }
+html.works-hosted-chrome .listing-view-root { padding-top: 0 !important; }
+html.works-hosted-chrome .listing-view-root:has(.works-hosted-pager) > .listing-items { flex-shrink: 0; }
+html.works-hosted-chrome .works-hosted-pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 12px;
+  min-height: 20px;
+  background: var(--surfacePrimary);
+  color: var(--textSecondary);
+  border-bottom: 1px solid var(--divider);
+  font: 11px system-ui;
+}
+html.works-hosted-chrome .works-hosted-pager button {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--textSecondary);
+  cursor: pointer;
+}
+html.works-hosted-chrome .works-hosted-pager button:hover { background: var(--surfaceSecondary); }
+html.works-hosted-chrome .works-hosted-pager .material-symbols { font-size: 15px; }
+html.works-hosted-chrome .works-filter-label { margin-left: auto; }
