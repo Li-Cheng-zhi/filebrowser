@@ -41,3 +41,17 @@ html.works-hosted-chrome .works-hosted-pager button {
 html.works-hosted-chrome .works-hosted-pager button:hover { background: var(--surfaceSecondary); }
 html.works-hosted-chrome .works-hosted-pager .material-symbols { font-size: 15px; }
 html.works-hosted-chrome .works-filter-label { margin-left: auto; }
+
+/* Directory functions stay inside the original 18085 UI. Only its breadcrumb address is hidden. */
+html.works-hosted-chrome:has(.works-hosted-directory-controls) header.flexbar {
+  display: flex !important;
+}
+html.works-hosted-chrome:has(.works-hosted-directory-controls) #main {
+  padding-top: var(--header-height) !important;
+}
+html.works-hosted-chrome .listing-view-root:has(.works-hosted-directory-controls) > .listing-items {
+  flex-shrink: 0;
+}
+html.works-hosted-chrome .works-hosted-directory-controls .works-tools {
+  flex-wrap: wrap;
+}

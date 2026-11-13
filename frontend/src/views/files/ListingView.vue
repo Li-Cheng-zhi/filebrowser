@@ -1,6 +1,6 @@
 <template>
   <div v-if="shareInfo.shareType !== 'upload'" class="listing-view-root no-select" :style="containerStyles">
-    <component :is="hostChromeEnabled($route) ? 'HostedDirectoryPager' : 'DirectoryPager'" v-if="req.page" :page="req.page" />
+    <component :is="hostChromeEnabled($route) ? 'HostedDirectoryControls' : 'DirectoryPager'" v-if="req.page" :page="req.page" />
     <!-- Show loading spinner while loading OR if we haven't loaded any data yet -->
     <div v-if="loading">
       <h2 class="message delayed">
@@ -190,7 +190,7 @@
 
 <script>
 import DirectoryPager from '@/works/DirectoryPager.vue';
-import HostedDirectoryPager from '@/works/HostedDirectoryPager.vue';
+import HostedDirectoryControls from '@/works/HostedDirectoryControls.vue';
 import { hostChromeEnabled } from '@/works/hostChrome.js';
 import downloadFiles from "@/utils/download";
 import { resourcesApi } from "@/api";
@@ -213,7 +213,7 @@ export default {
   name: "listingView",
   components: {
     DirectoryPager,
-    HostedDirectoryPager,
+    HostedDirectoryControls,
     Item,
     Upload,
     LoadingSpinner,
