@@ -3,6 +3,7 @@
 // Only lifecycle/host wiring changes; the original renderer/save implementation remains callable.
 import { h, markRaw } from 'vue';
 import FilePage from './FilePage.vue';
+import LatexPane from './LatexPane.vue';
 import { bridge } from './api.js';
 import { activateHostChrome, attachHostCommands, cleanHost, fileChromeState, hostChromeEnabled } from './hostChrome.js';
 import './hostChrome.css';
@@ -54,7 +55,7 @@ const HostedFile = {
 
 export default {
   name: 'WorksFilePageFactory',
-  render() { return h(hostChromeEnabled(this.$route) ? HostedFile : FilePage, {
+  render() { return h(String(this.$route.query.path || '').toLowerCase().endsWith('.tex') ? LatexPane : hostChromeEnabled(this.$route) ? HostedFile : FilePage, {
     ref: 'page', key: [this.$route.query.source, this.$route.query.path, this.$route.query.right].join('\u0000'),
   }); },
   async beforeRouteLeave(to, from) {
