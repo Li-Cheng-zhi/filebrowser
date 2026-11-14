@@ -19,12 +19,17 @@ vi.mock('./FilePage.vue', async () => {
     __scopeId: 'data-v-upstream-file',
     data: () => ({ loaded: true, busy: false, canonical: '/a/file.txt', source: 'home', path: '/a/file.txt',
       status: 'saved', message: '', office: false, officeDirty: false, textFile: true, mode: 'edit', right: false,
-      modes: [{ value: 'view' }, { value: 'edit' }], saver: { dirty: false }, saves: 0 }),
+      modes: [{ value: 'view' }, { value: 'edit' }], saver: { dirty: false }, saves: 0, guardCalled: false, unloadChecks: 0 }),
     render() { return h('main', { class: 'upstream-file-body' }, 'upstream renderer'); },
-    mounted() { window.worksFilesHost = { relocate: async () => {} }; return Promise.resolve(); },
-    beforeUnmount() { delete window.worksFilesHost; },
+    mounted() {
+      window.worksFilesHost = { relocate: async () => {} };
+      window.addEventListener('beforeunload', this.beforeUnload);
+      return Promise.resolve();
+    },
+    beforeUnmount() { window.removeEventListener('beforeunload', this.beforeUnload); delete window.worksFilesHost; },
     beforeRouteLeave() { this.guardCalled = true; return false; },
-    methods: { publish() {}, save() { this.saves++; }, switchMode() {}, reload() {}, saveAs() {}, openMain() {} },
+    methods: { publish() {}, save() { this.saves++; }, switchMode() {}, reload() {}, saveAs() {}, openMain() {},
+      beforeUnload(event) { this.unloadChecks++; event.preventDefault(); } },
   } };
 });
 
@@ -78,8 +83,9 @@ describe('resource host chrome', () => {
     expect(fileChromeState(page)).toMatchObject({ ready: true, dirty: true, mode: 'review', modes: ['view', 'edit', 'review'], saveAs: true });
     expect(fileChromeState({ ...page, right: true })).toMatchObject({ modes: [], saveAs: false });
   });
-  it('keeps the upstream scoped renderer and invokes its save and route-leave contracts', async () => {
+  it('keeps the upstream renderer and explicit save while allowing hosted navigation without save checks', async () => {
     await chrome();
+    window.cefQuery = vi.fn(({ onSuccess }) => onSuccess('{}'));
     const { createApp, nextTick } = await import('vue');
     const factory = (await import('./HostedFilePage.vue')).default;
     const target = document.createElement('div'); document.body.append(target);
@@ -89,8 +95,17 @@ describe('resource host chrome', () => {
     expect(target.querySelector('.upstream-file-body')?.hasAttribute('data-v-upstream-file')).toBe(true);
     await window.worksFilesHost.runCommand('save');
     expect(vm.$refs.page.saves).toBe(1);
-    expect(await factory.beforeRouteLeave.call(vm, { name: 'Settings' }, {})).toBe(false);
-    expect(vm.$refs.page.guardCalled).toBe(true);
+    vm.$refs.page.saver.dirty = true;
+    vm.$refs.page.status = 'saving';
+    expect(await factory.beforeRouteLeave.call(vm, { name: 'Settings' }, {})).toBe(true);
+    expect(await factory.beforeRouteLeave.call(vm, { name: 'Files', path: '/files/home/a/' }, {})).toBe(true);
+    expect(await factory.beforeRouteUpdate.call(vm, { query: { source: 'home', path: '/b/file.txt' } },
+      { query: { source: 'home', path: '/a/file.txt' } })).toBe(true);
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
+    expect(vm.$refs.page.guardCalled).toBe(false);
+    expect(vm.$refs.page.unloadChecks).toBe(0);
+    expect(vm.$refs.page.saves).toBe(1);
+    expect(window.cefQuery.mock.calls.some(([request]) => JSON.parse(request.request).action === 'navigate')).toBe(false);
     app.unmount(); target.remove();
     expect(window.worksFilesHost).toBeUndefined();
   });

@@ -3,7 +3,6 @@
 // Only lifecycle/host wiring changes; the original renderer/save implementation remains callable.
 import { h, markRaw } from 'vue';
 import FilePage from './FilePage.vue';
-import { extractSourceFromPath } from '@/utils/url';
 import { bridge } from './api.js';
 import { activateHostChrome, attachHostCommands, cleanHost, fileChromeState, hostChromeEnabled } from './hostChrome.js';
 import './hostChrome.css';
@@ -23,6 +22,7 @@ const HostedFile = {
   async mounted() {
     activateHostChrome();
     const loading = FilePage.mounted.call(this);
+    window.removeEventListener('beforeunload', this.beforeUnload);
     this.chromeHost = markRaw(window.worksFilesHost);
     attachHostCommands(this.chromeHost, {
       view: () => this.switchMode('view'), edit: () => this.switchMode('edit'),
@@ -46,16 +46,6 @@ const HostedFile = {
     await this.publishChrome();
   },
   beforeUnmount() { cleanHost(this.chromeHost, () => FilePage.beforeUnmount.call(this)); },
-  async beforeRouteLeave(to) {
-    if (to.name === 'Files') {
-      try {
-        const result = extractSourceFromPath(to.path);
-        await bridge({ action: 'navigate', source: decodeURIComponent(result.source), path: decodeURIComponent(result.path) });
-      } catch (error) { this.message = error.message; }
-      return false;
-    }
-    return FilePage.beforeRouteLeave.call(this, to);
-  },
   methods: {
     publishChrome() { return bridge(fileChromeState(this)).catch(error => { console.warn('[WorksFiles] chrome state', error.message); }); },
     publish(force = false) { FilePage.methods.publish.call(this, force); this.publishChrome(); },
@@ -73,10 +63,6 @@ export default {
   },
   async beforeRouteUpdate(to, from) {
     if (to.query.source === from.query.source && to.query.path === from.query.path) return true;
-    if (hostChromeEnabled(this.$route)) {
-      await bridge({ action: 'navigate', source: String(to.query.source || ''), path: String(to.query.path || '') });
-      return false;
-    }
     const page = this.$refs.page; const guard = page?.$options.beforeRouteLeave;
     return typeof guard === 'function' ? guard.call(page, to, from) : true;
   },
