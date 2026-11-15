@@ -109,6 +109,89 @@ describe('resource host chrome', () => {
     app.unmount(); target.remove();
     expect(window.worksFilesHost).toBeUndefined();
   });
+  it('reports a loaded LaTeX editor through the main-frame host and closes clean files without saving', async () => {
+    await chrome('/works/file?source=home&path=/paper/main.tex&worksChrome=1&worksPage=latex-1');
+    const messages = [];
+    window.cefQuery = vi.fn(({ request, onSuccess }) => { messages.push(JSON.parse(request)); onSuccess('{}'); });
+    const { createApp, nextTick } = await import('vue');
+    const factory = (await import('./HostedFilePage.vue')).default;
+    const target = document.createElement('div'); document.body.append(target);
+    const app = createApp(factory);
+    app.config.globalProperties.$route = { query: { source: 'home', path: '/paper/main.tex', worksChrome: '1' } };
+    const vm = app.mount(target); await nextTick();
+    const frame = target.querySelector('iframe');
+    const editor = { state: { openTabs: [{ kind: 'text', path: 'main.tex', dirty: false }] }, saveAll: vi.fn(), discardClose: vi.fn() };
+    frame.contentWindow.__ol = editor; frame.contentWindow.__olReady = true;
+    try {
+      expect(window.worksFilesHost).toBeDefined();
+      await window.worksFilesHost.publish();
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'chromeState', documentKey: 'latex-1', ready: true, dirty: false, state: 'saved' }));
+      await window.worksFilesHost.prepareClose('clean-close');
+      expect(editor.saveAll).not.toHaveBeenCalled();
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'closeReady', token: 'clean-close', documentKey: 'latex-1' }));
+      editor.state.openTabs[0].savePending = Promise.resolve();
+      await window.worksFilesHost.publish();
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'chromeState', ready: true, busy: true, dirty: false, state: 'saving' }));
+      editor.state.openTabs[0].dirty = true;
+      expect(await factory.beforeRouteLeave.call(vm, { name: 'Files' }, {})).toBe(true);
+      expect(await factory.beforeRouteUpdate.call(vm, { query: { source: 'home', path: '/other.tex' } },
+        { query: { source: 'home', path: '/paper/main.tex' } })).toBe(true);
+      expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
+      expect(editor.saveAll).not.toHaveBeenCalled();
+    } finally { app.unmount(); target.remove(); }
+    expect(window.worksFilesHost).toBeUndefined();
+  });
+  it('waits for real LaTeX save receipts on explicit close and preserves failed buffers for keep or discard', async () => {
+    await chrome('/works/file?worksChrome=1&worksPage=latex-2');
+    const messages = [];
+    window.cefQuery = vi.fn(({ request, onSuccess }) => { messages.push(JSON.parse(request)); onSuccess('{}'); });
+    const { createApp, nextTick } = await import('vue');
+    const page = (await import('./LatexPane.vue')).default;
+    const target = document.createElement('div'); document.body.append(target);
+    const app = createApp(page); app.config.globalProperties.$route = { query: { source: 'home', path: '/paper/main.tex' } };
+    app.mount(target); await nextTick();
+    const frame = target.querySelector('iframe');
+    let complete;
+    const receipt = new Promise(resolve => { complete = resolve; });
+    const tabs = [{ kind: 'text', path: 'main.tex', dirty: true }, { kind: 'text', path: 'part.tex', dirty: true }];
+    const editor = { state: { openTabs: tabs }, saveAll: vi.fn(async () => {
+      await receipt; tabs.forEach(tab => { tab.dirty = false; });
+    }), discardClose: vi.fn() };
+    frame.contentWindow.__ol = editor; frame.contentWindow.__olReady = true;
+    try {
+      const host = window.worksFilesHost; expect(host).toBeDefined();
+      const closing = host.prepareClose('saving-close');
+      expect(editor.saveAll).toHaveBeenCalledOnce();
+      expect(messages.some(message => message.action === 'closeReady')).toBe(false);
+      complete(); await closing;
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'closeReady', token: 'saving-close', documentKey: 'latex-2' }));
+      tabs[0].dirty = true;
+      editor.saveAll.mockImplementation(async () => { throw new Error('磁盘版本冲突'); });
+      await host.prepareClose('failed-close');
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'closeFailed', token: 'failed-close', message: '磁盘版本冲突', documentKey: 'latex-2' }));
+      expect(tabs[0].dirty).toBe(true);
+      const saves = editor.saveAll.mock.calls.length;
+      await host.cancelClose(); expect(tabs[0].dirty).toBe(true);
+      await host.discardClose('discard-close');
+      expect(editor.discardClose).toHaveBeenCalledOnce(); expect(editor.saveAll.mock.calls.length).toBe(saves);
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'closeReady', token: 'discard-close', documentKey: 'latex-2' }));
+    } finally { complete(); app.unmount(); target.remove(); }
+  });
+  it('lets an explicitly discarded LaTeX page close while the iframe is still loading', async () => {
+    await chrome('/works/file?worksChrome=1&worksPage=latex-loading');
+    const messages = [];
+    window.cefQuery = vi.fn(({ request, onSuccess }) => { messages.push(JSON.parse(request)); onSuccess('{}'); });
+    const { createApp, nextTick } = await import('vue');
+    const page = (await import('./LatexPane.vue')).default;
+    const target = document.createElement('div'); document.body.append(target);
+    const app = createApp(page); app.config.globalProperties.$route = { query: { source: 'home', path: '/paper/main.tex' } };
+    app.mount(target); await nextTick();
+    try {
+      expect(window.worksFilesHost).toBeDefined();
+      await window.worksFilesHost.discardClose('loading-close');
+      expect(messages).toContainEqual(expect.objectContaining({ action: 'closeReady', token: 'loading-close', documentKey: 'latex-loading' }));
+    } finally { app.unmount(); target.remove(); }
+  });
   it('mounts the actual directory renderer with the hosted lifecycle, full tools and original scope', async () => {
     await chrome('/files/home/a/?worksChrome=1&worksPage=directory-1');
     const { createApp, nextTick } = await import('vue');
