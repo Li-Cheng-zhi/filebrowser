@@ -155,6 +155,7 @@ onMounted(async () => {
     // Initialize the EPUB book (async)
     const { default: ePub } = await import("@likecoin/epub-ts");
     if (isUnmounted) return;
+    if (!epubUrl) throw new Error("无法获取 EPUB 文件的预览地址");
     const newBook = ePub(epubUrl, { openAs: "epub" });
     book = newBook;
 
