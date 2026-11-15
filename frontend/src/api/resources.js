@@ -1055,14 +1055,9 @@ export async function checksum(source, path, algo) {
  * URL to open a file inline in a new browser tab via the download endpoint.
  * Uses inline disposition and respects download permissions and share limits.
  */
-export function getOpenFileURL(source, path, shareInfo = null) {
-  if (isMediaFile(path)) {
-    return null
-  }
-  if (shareInfo) {
-    return getDownloadURLPublic(shareInfo, [path], true)
-  }
-  return getDownloadURL(source, path, true)
+// Kept for callers that ask for an inline URL. File opening never uses a download URL.
+export function getOpenFileURL(_source, _path, _shareInfo = null) {
+  return null
 }
 
 // GET /api/resources/view — inline non-media bytes via viewToken (not download-metered).
@@ -1108,7 +1103,7 @@ export function getRawViewURLPublic(share, files, viewToken) {
  * URL for inline viewing. Routes audio/video to /media/stream and other files to /resources/view.
  * @param {{ hash: string, path?: string | undefined } | null} [shareInfo] Share context for public routes; null/omitted for authenticated routes.
  */
-export function getViewURL(source, path, viewToken, shareInfo = null, allowDownloadFallback = false, mimeOrName = '') {
+export function getViewURL(source, path, viewToken, shareInfo = null, _legacyFallback = false, mimeOrName = '') {
   const typeHint = mimeOrName || path
 
   if (viewToken) {
@@ -1123,13 +1118,7 @@ export function getViewURL(source, path, viewToken, shareInfo = null, allowDownl
     }
     return getRawViewURL(source, path, viewToken)
   }
-  if (!allowDownloadFallback) {
-    return null
-  }
-  if (shareInfo) {
-    return getDownloadURLPublic(shareInfo, [path], true)
-  }
-  return getDownloadURL(source, path, true)
+  return null
 }
 
 export function getDownloadURL(source, path, inline, useExternal) {

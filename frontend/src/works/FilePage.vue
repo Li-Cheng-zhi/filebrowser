@@ -3,14 +3,13 @@
   <header v-if="!right"><span class="filename" :title="canonical">{{ name }}</span><span v-if="!right && (office || textFile)" class="modes" role="group" aria-label="文件模式"><button v-for="item in modes" :key="item.value" :class="{selected:mode===item.value}" :disabled="busy" @click="switchMode(item.value)">{{ item.label }}</button></span><button v-if="mode!=='view'" :disabled="busy" @click="save">保存</button><button v-if="!right&&(textFile||office)" :disabled="busy" @click="saveAs">另存为</button><span class="status" :title="message">{{ statusLabel }}</span><button v-if="right" @click="openMain">主区域打开</button><button :disabled="busy" @click="reload(false)">刷新</button></header>
   <div v-if="message" class="message" role="status">{{ message }}</div>
   <div v-if="conflict" class="conflict"><span>磁盘内容已变化，当前编辑内容仍保留。</span><button @click="keep">继续编辑</button><button @click="reload(true)">重新载入磁盘版本</button><button @click="overwrite">确认覆盖当前磁盘版本</button><button @click="saveAs">另存为</button></div>
-  <div ref="body" class="body">
-   <OfficePane v-if="loaded&&office" :key="generation" ref="office" :source="source" :path="path" :mode="mode" :owner="owner" @state="officeState" @ready="officeReady" />
+  <div ref="body" class="body" @error.capture="resourceError">
+   <OfficePane v-if="loaded&&office" :key="generation" ref="office" :source="source" :path="path" :mode="mode" :owner="owner" @state="officeState" @ready="officeReady" @open-error="openFailure" />
    <div v-else-if="loaded&&textFile&&markdown&&mode==='view'" class="markdown"><MarkdownViewer :splitMode="true" :liveContent="content" /></div>
    <img v-else-if="loaded&&textFile&&svg&&mode==='view'" :src="svgUrl" class="svg-preview" alt="SVG 文件预览" />
    <div v-else-if="loaded&&textFile" ref="editor" class="editor"></div>
-   <component v-else-if="binaryView" :is="binaryView" :fbdata="binaryInfo" />
-   <iframe v-else-if="raw" :src="raw" title="文件预览" sandbox="allow-scripts allow-downloads"></iframe>
-   <a v-else-if="downloadURL" :href="downloadURL" download>下载原文件</a><span v-else-if="!loaded">正在读取…</span>
+   <component v-else-if="binaryView" :is="binaryView" :fbdata="binaryInfo" @open-error="openFailure" />
+   <span v-else-if="!loaded">正在读取…</span>
   </div>
   <div v-if="busy" class="busy" tabindex="0">正在确认原文件保存，请保持页面打开…</div>
  </main>
@@ -24,42 +23,51 @@ import { openItem } from './directory.js';
 import MarkdownViewer from '@/views/files/MarkdownViewer.vue';
 import { mutations } from '@/store';
 import { resourcesApi } from '@/api';
-import { api,json,bridge,fileURL,pageId } from './api.js';
+import { api,json,bridge,fileURL,pageId,openOriginalWithDefaultApp,isOpenedFileResource } from './api.js';
 import { TextSave,restoreText } from './save.js';
 import OfficePane from './OfficePane.vue';
 export default {
  components:{OfficePane,MarkdownViewer,Preview,EpubViewer},
- data(){return {source:String(this.$route.query.source||''),path:String(this.$route.query.path||''),canonical:'',mode:'view',allowedModes:['view'],right:this.$route.query.right==='1',owner:pageId(),loaded:false,textFile:false,office:false,original:'',status:'loading',lastPublishKey:'',message:'',conflict:null,raw:'',downloadURL:'',binaryView:'',binaryInfo:null,svgUrl:'',model:null,editorInstance:null,saver:null,busy:false,autosave:null,autosavePaused:false,maxsave:null,heartbeat:null,generation:0,officeEnded:false,officeDirty:false,monaco:null,content:'',rendered:'',unsubscribe:null,baseVersion:'',lastSavedVersion:''}},
- computed:{name(){return this.path.split('/').pop()},svg(){return /\.svg$/i.test(this.path)},markdown(){return /\.(md|markdown|mdown)$/i.test(this.path)},modes(){const modes=[{value:'view',label:'预览'},{value:'edit',label:'编辑'}];if(/\.(docx?|docm|odt)$/i.test(this.path))modes.push({value:'review',label:'审阅'});return modes.filter(item=>this.allowedModes.includes(item.value))},statusLabel(){return {loading:'读取中',saved:'已保存',dirty:'未保存',saving:'保存中',conflict:'保存冲突',failed:'保存失败'}[this.status]||this.status}},
+ data(){return {source:String(this.$route.query.source||''),path:String(this.$route.query.path||''),canonical:'',mode:'view',allowedModes:['view'],right:this.$route.query.right==='1',owner:pageId(),loaded:false,textFile:false,office:false,original:'',status:'loading',lastPublishKey:'',message:'',conflict:null,raw:'',defaultOpenIdentity:'',binaryView:'',binaryInfo:null,svgUrl:'',model:null,editorInstance:null,saver:null,busy:false,autosave:null,autosavePaused:false,maxsave:null,heartbeat:null,generation:0,officeEnded:false,officeDirty:false,monaco:null,content:'',rendered:'',unsubscribe:null,baseVersion:'',lastSavedVersion:''}},
+ computed:{name(){return this.path.split('/').pop()},svg(){return /\.svg$/i.test(this.path)},markdown(){return /\.(md|markdown|mdown)$/i.test(this.path)},modes(){const modes=[{value:'view',label:'预览'},{value:'edit',label:'编辑'}];if(/\.(docx?|docm|odt)$/i.test(this.path))modes.push({value:'review',label:'审阅'});return modes.filter(item=>this.allowedModes.includes(item.value))},statusLabel(){return {loading:'读取中',saved:'已保存',dirty:'未保存',saving:'保存中',conflict:'保存冲突',failed:'失败',external:'系统应用打开'}[this.status]||this.status}},
  async mounted(){
   window.worksFilesHost={discardClose:async token=>{try{if(this.office)await this.$refs.office?.close(true)}catch(e){console.warn('[WorksFiles] discard cleanup',e.message)}this.officeDirty=false;this.conflict=null;this.status='saved';if(this.saver){this.saver.baseText=this.saver.text;this.saver.conflict=null}await bridge({action:'closeReady',token})},openMain:()=>this.openMain(),cancelClose:()=>{if(this.officeEnded){this.officeEnded=false;this.generation++}},prepareClose:async token=>{try{await this.prepareClose();await bridge({action:'closeReady',token})}catch(e){this.message=e.message;await bridge({action:'closeFailed',token,message:e.message})}},refresh:change=>{if(!change||(this.mode==='view'&&(!change.canonicalPath||change.canonicalPath===this.canonical)))this.reload(false)},relocate:async(source,path,canonical)=>{if(this.office&&this.mode!=='view')throw new Error('Office 编辑中不可移动');this.source=source;this.path=path;this.canonical=canonical;const query=new URLSearchParams({source,path});history.replaceState(null,'',`/works/file?${query}`);document.title=this.name;if(this.textFile){await this.mountEditor();await this.renderMarkdown();if(this.saver?.dirty&&!this.conflict&&!this.autosavePaused)this.scheduleSave()}else await this.reload(false)}};
   window.addEventListener('beforeunload',this.beforeUnload);window.addEventListener('pagehide',this.pageHide);this.heartbeat=setInterval(()=>{if(this.officeDirty||this.saver?.dirty||this.status==='saving')this.publish(true)},15000);await this.load();
  },
  beforeUnmount(){clearInterval(this.heartbeat);api("works/lifecycle",{}, {...json({owner:this.owner,dirty:false,state:"closed"}),keepalive:true}).catch(()=>{});if(this.svgUrl)URL.revokeObjectURL(this.svgUrl);this.disposeEditor();clearTimeout(this.autosave);clearTimeout(this.maxsave);window.removeEventListener('beforeunload',this.beforeUnload);window.removeEventListener('pagehide',this.pageHide);delete window.worksFilesHost},
+ errorCaptured(error,_instance,info){if(/setup|render|loader|mounted|runtime-(?:0|1|13|m)$/i.test(info)){this.openFailure(error);return false}},
  async beforeRouteLeave(to){if(window.cefQuery&&to.name==='Files'){try{const result=extractSourceFromPath(to.path);await openItem(decodeURIComponent(result.source),decodeURIComponent(result.path));}catch(e){this.message=e.message}return false}try{await this.prepareClose();return true}catch(e){this.message=e.message;return false}},
  methods:{
-  async load(){try{
+  async load(){this.defaultOpenIdentity='';try{
    const metadata=await api('works/file',{source:this.source,path:this.path,metadata:'true'});this.canonical=metadata.canonicalPath;this.allowedModes=metadata.modes||["view"];mutations.replaceRequest({...metadata,name:this.name,type:this.markdown?"text/markdown":metadata.type});this.office=metadata.office===true;document.title=this.name;
    if(!this.office){try{
     if(!this.svg && (/^(image|audio|video)\//.test(metadata.type||'')||/\.(pdf|epub|gif|png|jpe?g|webp|bmp|mp3|wav|ogg|m4a|flac|mp4|webm|mov)$/i.test(this.path))){const e=new Error('media');e.status=415;throw e}
 
     const file=await this.read();this.original=file.text;this.content=file.text;this.textFile=true;if(file.editable===false){this.allowedModes=['view'];this.message=file.editLimitReason}
     this.saver=new TextSave(()=>this.read(),(text,version)=>api('resources',{source:this.source,path:this.path},{method:'PUT',headers:{'If-Match':`"${version}"`},body:text}),()=>this.changed());this.saver.load(file);
-   }catch(e){if(e.status!==415&&e.status!==413)throw e;const item=await resourcesApi.fetchFiles(this.source,this.path);if(e.message!=='media')this.message=e.message;this.raw=resourcesApi.getRawViewURL(this.source,this.path,item.viewToken);this.binaryInfo=item;mutations.replaceRequest(item);this.binaryView=/\.epub$/i.test(this.path)?'EpubViewer':(/^(image|audio|video)\//.test(item.type||'')||/\.pdf$/i.test(this.path)?'Preview':'');this.textFile=false;if(e.status===413){this.raw='';this.binaryView='';this.downloadURL='/api/resources/download?'+new URLSearchParams({source:this.source,file:this.path})}}}
+   }catch(e){if(e.status!==415||e.message!=='media')throw e;const item=await resourcesApi.fetchFiles(this.source,this.path);this.raw=resourcesApi.getRawViewURL(this.source,this.path,item.viewToken);this.binaryInfo=item;mutations.replaceRequest(item);this.binaryView=/\.epub$/i.test(this.path)?'EpubViewer':(/^(image|audio|video)\//.test(item.type||'')||/\.pdf$/i.test(this.path)?'Preview':'');this.textFile=false;if(!this.binaryView)throw new Error('内置查看器不支持此文件格式')}}
    this.loaded=true;this.status='saved';await this.$nextTick();await this.mountEditor();await this.renderMarkdown();await bridge({action:'identity',canonicalPath:this.canonical,source:this.source,path:this.path,title:this.name});this.publish();
-  }catch(e){this.status='failed';this.message=e.message;this.loaded=true}},
+  }catch(e){await this.openFailure(e)}},
+  async openFailure(error){
+   if(error?.name==='AbortError')return;
+   const identity=this.source+'\u0000'+this.path;if(this.defaultOpenIdentity===identity)return;
+   this.defaultOpenIdentity=identity;this.status='failed';this.message=error?.message||String(error);this.loaded=true;
+   try{await openOriginalWithDefaultApp(this.source,this.path);this.status='external';this.message+='；已交给系统关联应用打开原文件'}catch(e){this.message+='；系统应用打开失败：'+e.message}this.publish();
+  },
+  resourceError(event){const node=event.target;if(!['IMG','AUDIO','VIDEO'].includes(node?.tagName))return;const url=node.currentSrc||node.src;if(url===this.svgUrl||isOpenedFileResource(url,this.source,this.path))this.openFailure(new Error('内置查看器无法读取或解析原文件'))},
   read(){return api('works/file',{source:this.source,path:this.path})},
   changed(){if(!this.saver)return;this.status=this.saver.state;this.conflict=this.saver.conflict;this.content=this.saver.text;this.notifySaved(this.saver.version);this.publish()},
   notifySaved(version){if(!version)return;const previous=this.lastSavedVersion;this.lastSavedVersion=version;if(previous&&previous!==version)bridge({action:'saved',canonicalPath:this.canonical,source:this.source,path:this.path}).catch(()=>{})},
   publish(force=false){const key=JSON.stringify([this.canonical,this.mode,this.status,this.office?this.officeDirty:!!this.saver?.dirty,window.__worksWorkerStatus||{}]);if(!force&&key===this.lastPublishKey)return;this.lastPublishKey=key;api('works/lifecycle',{},json({owner:this.owner,canonicalPath:this.canonical,dirty:this.office?this.officeDirty:!!this.saver?.dirty,state:this.status})).catch(()=>{});bridge({action:'state',state:this.status,dirty:this.office?this.officeDirty:!!this.saver?.dirty,mode:this.mode,canonicalPath:this.canonical,workers:window.__worksWorkerStatus||{}}).catch(e=>{this.message=e.message})},
   disposeEditor(){this.compositionStart?.dispose();this.compositionEnd?.dispose();this.composing=false;this.unsubscribe?.dispose();this.unsubscribe=null;this.editorInstance?.dispose();this.model?.dispose();this.editorInstance=null;this.model=null},
-  async mountEditor(){this.disposeEditor();if(!this.textFile||((this.markdown||this.svg)&&this.mode==='view'))return;
+  async mountEditor(){this.disposeEditor();if(!this.textFile||((this.markdown||this.svg)&&this.mode==='view'))return;try{
    this.monaco=(await import('./monaco.js')).default;await this.$nextTick();if(!this.$refs.editor)return;
    const uri=this.monaco.Uri.parse('file://'+this.canonical);this.model=markRaw(this.monaco.editor.createModel(this.saver.text,undefined,uri));this.editorInstance=markRaw(this.monaco.editor.create(this.$refs.editor,{model:this.model,readOnly:this.mode==='view'||this.right,automaticLayout:true,minimap:{enabled:false},fontSize:14,wordWrap:this.markdown?'on':'off',scrollBeyondLastLine:false}));
    this.compositionStart=this.editorInstance.onDidCompositionStart(()=>{this.composing=true;clearTimeout(this.autosave);clearTimeout(this.maxsave);this.maxsave=null});this.compositionEnd=this.editorInstance.onDidCompositionEnd(()=>{this.composing=false;if(this.saver?.dirty)this.scheduleSave()});
    this.unsubscribe=this.model.onDidChangeContent(()=>{if(this.mode==='view'||this.right)return;this.saver.edit(restoreText(this.model.getValue(),this.original));this.scheduleSave()});
    setTimeout(()=>this.publish(),1200);console.warn('[WorksFiles] Monaco mounted',JSON.stringify({width:this.$refs.editor.clientWidth,height:this.$refs.editor.clientHeight,lines:this.model.getLineCount()}));
    this.editorInstance.addCommand(this.monaco.KeyMod.CtrlCmd|this.monaco.KeyCode.KeyS,()=>{this.save()});
+   }catch(error){await this.openFailure(error)}
   },
   async renderMarkdown(){if(this.svg){if(this.svgUrl)URL.revokeObjectURL(this.svgUrl);this.svgUrl=URL.createObjectURL(new Blob([this.content],{type:'image/svg+xml'}))}},
   scheduleSave(){clearTimeout(this.autosave);if(this.conflict||this.autosavePaused||this.composing)return;this.autosave=setTimeout(()=>this.save(),1500);if(!this.maxsave)this.maxsave=setTimeout(()=>{this.maxsave=null;this.save()},10000)},

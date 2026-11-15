@@ -51,7 +51,7 @@ func worksCreate(w http.ResponseWriter, r *http.Request, d *Context) (int, error
 		return http.StatusInternalServerError, e
 	}
 	defer os.Remove(temp.Name())
-	_, e = io.Copy(temp, http.MaxBytesReader(w, r.Body, 64<<20))
+	_, e = io.Copy(temp, http.MaxBytesReader(w, r.Body, worksTextMaxBytes))
 	closeErr := temp.Close()
 	if e != nil {
 		return http.StatusBadRequest, e

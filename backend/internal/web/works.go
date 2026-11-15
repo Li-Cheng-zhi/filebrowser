@@ -21,6 +21,8 @@ import (
 
 var worksFiles = workspace.New(workspace.NativeCommand{Binary: os.Getenv("WORKS_FILES_NATIVE")})
 
+const worksTextMaxBytes = 256 << 20
+
 func worksRuntime() string {
 	if value := os.Getenv("WORKS_FILES_RUNTIME"); value != "" {
 		return value
@@ -62,13 +64,15 @@ func worksFileGet(w http.ResponseWriter, r *http.Request, d *Context) (int, erro
 	if !stat.Mode().IsRegular() {
 		return http.StatusBadRequest, fmt.Errorf("文本读取目标不是普通文件")
 	}
-	const maxText = 64 << 20
-	data, err := io.ReadAll(io.LimitReader(file, maxText+1))
+	if stat.Size() > worksTextMaxBytes {
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("文件超过内置文本编辑的 256 MiB 上限")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, worksTextMaxBytes+1))
 	if err != nil {
 		return ErrToStatus(err), err
 	}
-	if len(data) > maxText {
-		return http.StatusRequestEntityTooLarge, fmt.Errorf("Monaco 文本编辑上限为 64 MiB；文件未截断，可使用下载")
+	if len(data) > worksTextMaxBytes {
+		return http.StatusRequestEntityTooLarge, fmt.Errorf("文件超过内置文本编辑的 256 MiB 上限")
 	}
 	if !utf8.Valid(data) || strings.ContainsRune(string(data), '\x00') {
 		return http.StatusUnsupportedMediaType, fmt.Errorf("当前仅无损编辑 UTF-8 文本，原文件未修改")
@@ -127,7 +131,7 @@ func worksPut(w http.ResponseWriter, r *http.Request, d *Context, source, indexP
 		return http.StatusInternalServerError, err
 	}
 	name := candidate.Name()
-	_, copyErr := io.Copy(candidate, http.MaxBytesReader(w, r.Body, 64<<20))
+	_, copyErr := io.Copy(candidate, http.MaxBytesReader(w, r.Body, worksTextMaxBytes))
 	closeErr := candidate.Close()
 	if copyErr != nil {
 		_ = os.Remove(name)

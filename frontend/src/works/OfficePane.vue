@@ -6,7 +6,7 @@ import { DocumentEditor } from '@onlyoffice/document-editor-vue';
 import { globalVars } from '@/utils/constants';
 import { api,json,pageId } from './api.js';
 export default {
- components:{DocumentEditor},props:{source:String,path:String,mode:String,owner:String},emits:['state','ready'],
+ components:{DocumentEditor},props:{source:String,path:String,mode:String,owner:String},emits:['state','ready','open-error'],
  data(){return {config:null,identity:'office-'+pageId(),server:globalVars.onlyOfficeUrl,revision:0,savedRevision:0,candidateRevision:-1,accepted:true,frozen:false,ready:false,autosavePaused:false,pending:null,last:null,timer:null}},
  async mounted(){try{this.config=await api('office/config',{source:this.source,path:this.path,mode:this.mode,owner:this.owner});this.timer=setInterval(()=>{if(!this.autosavePaused&&this.revision>this.savedRevision&&this.accepted&&!this.pending&&this.last?.state!=='conflict')this.save().catch(()=>{})},10000)}catch(e){this.editorError(e)}},
  beforeUnmount(){clearInterval(this.timer);if(this.mode==='view'&&this.config)this.command('end',{discard:true}).catch(()=>{})},
@@ -14,7 +14,7 @@ export default {
   documentReady(){this.ready=true;this.$emit('ready',this.config.works);this.report('saved')},
   documentState(event){this.accepted=!event.data;if(event.data)this.revision++;this.report(this.revision>this.savedRevision?'dirty':'saved')},
   report(state,error=''){this.$emit('state',{state,error,dirty:this.revision>this.savedRevision,session:this.last})},
-  editorError(error){this.report('failed',error?.message||JSON.stringify(error?.data||error))},
+  editorError(error){const message=error?.message||JSON.stringify(error?.data||error);this.report('failed',message);if(!this.ready)this.$emit('open-error',new Error(message))},
   command(action,extra={}){return api('works/office/command',{},json({key:this.config.works.key,owner:this.owner,action,...extra}))},
   async save(freeze=false){
    if(this.mode==='view')return;if(this.pending)return this.pending;

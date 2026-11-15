@@ -4,6 +4,7 @@
       <p>{{ $t("general.loading", { suffix: "..." }) }}</p>
     </div>
 
+    <p v-if="openErrorMessage">{{ openErrorMessage }}</p>
     <div id="viewer" ref="viewer" :class="{ ready: isReady }"></div>
 
     <div v-if="isReady" class="navigation">
@@ -14,13 +15,17 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { getCurrentInstance, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { openOriginalWithDefaultApp } from "@/works/api.js";
 import type { Book, Rendition } from "@likecoin/epub-ts";
 import { state, mutations, getters } from "@/store";
 import { resourcesApi } from "@/api";
 import { ensureViewToken, requestViewIdentity, getCachedViewToken, getRequestViewToken } from "@/api/viewToken.js";
 
 defineOptions({ name: "epubViewer" });
+const emit = defineEmits(["open-error"]);
+const instance = getCurrentInstance();
+const openErrorMessage = ref("");
 
 /** Hash format: `#epubcfi=<encodeURIComponent(epub-cfi)>` — distinct from listing `#filename` hashes. */
 const EPUB_HASH_PREFIX = "epubcfi=";
@@ -60,6 +65,7 @@ let epubHashDebounceTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeTimer: number | null = null;
 let isUnmounted = false;
+const openedFile = { source: state.req.source, path: state.req.path };
 let onRelocatedHandler: ((loc: unknown) => void) | null = null;
 let onWindowHashChangeHandler: (() => void) | null = null;
 
@@ -85,7 +91,14 @@ function prevPage() {
 }
 
 function onLoadComponentError(error: unknown) {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  if (isUnmounted || failure.name === 'AbortError') return;
   console.error("Error loading EPUB file:", error);
+  openErrorMessage.value = failure.message;
+  if (instance?.vnode.props?.onOpenError) { emit('open-error', failure); return; }
+  void openOriginalWithDefaultApp(openedFile.source, openedFile.path).then(() => {
+    openErrorMessage.value += '；已交给系统关联应用打开原文件';
+  }).catch((reason: Error) => { openErrorMessage.value += '；系统应用打开失败：' + reason.message; });
 }
 
 watch(() => getters.isDarkMode(), () => { applyTheme() }, { flush: "post" });

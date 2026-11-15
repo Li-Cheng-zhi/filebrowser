@@ -7,6 +7,18 @@ export async function api(path, params = {}, options = {}) {
 }
 export const json = body => ({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 export function bridge(request){return new Promise((resolve,reject)=>{if(!window.cefQuery){resolve(null);return;}window.cefQuery({request:JSON.stringify({worksFiles:1,...hostRequest(request)}),onSuccess:value=>{try{resolve(JSON.parse(value))}catch{resolve(value)}},onFailure:(_code,message)=>reject(new Error(message))});});}
+// Actual file opens only. Thumbnail and hover-preview code never calls this boundary.
+export function openOriginalWithDefaultApp(source, path) {
+ if (!window.cefQuery) return Promise.reject(new Error('当前页面没有桌面宿主，请用系统关联应用打开原文件'));
+ return bridge({action:'openDefaultApp',source,path});
+}
+export function isOpenedFileResource(url, source, path) {
+ try {
+  const target = new URL(url, location.href);
+  return target.origin === location.origin && ['/api/resources/view','/api/media/stream'].includes(target.pathname)
+   && target.searchParams.get('source') === source && target.searchParams.get('file') === path;
+ } catch { return false; }
+}
 export function fileURL(source,path,right=false){const q=new URLSearchParams({source,path,...(right?{right:'1'}:{})});return `/works/file?${q}`;}
 // ZeroTier HTTP is intentionally not a browser secure context. randomUUID is
 // unavailable there; getRandomValues is supported in insecure contexts too.

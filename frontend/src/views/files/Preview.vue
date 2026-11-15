@@ -41,16 +41,7 @@
             <i class="material-symbols">picture_as_pdf</i>
             {{ $t("files.mobilePdfPreviewHint") }}
           </div>
-          <div class="preview-buttons" v-if="permissions.download">
-            <a
-              target="_blank"
-              :href="downloadUrl"
-              class="button button--flat preview-action--icon-only"
-              :aria-label="$t('general.download', { suffix: '' })"
-            >
-              <i class="material-symbols">file_download</i>
-            </a>
-          </div>
+          <p>{{ openErrorMessage }}</p>
         </div>
         <iframe
           v-else
@@ -66,19 +57,7 @@
           <i class="material-symbols">feedback</i>
           {{ $t("files.noPreview") }}
         </div>
-        <div class="preview-buttons" v-if="permissions.download">
-          <a
-            target="_blank"
-            :href="downloadUrl"
-            class="button button--flat preview-action--icon-only"
-            :aria-label="$t('general.download', { suffix: '' })"
-          >
-            <i class="material-symbols">file_download</i>
-          </a>
-        </div>
-        <div v-else>
-          <p> {{ $t("files.noDownloadAccess") }} </p>
-        </div>
+        <p>{{ openErrorMessage }}</p>
       </div>
     </div>
   </div>
@@ -86,6 +65,7 @@
 <script>
 import { createAsyncComponent } from "@/utils/asyncComponent.js";
 import { resourcesApi, mediaApi } from "@/api";
+import { openOriginalWithDefaultApp } from "@/works/api.js";
 import { ensureViewToken, requestViewIdentity } from "@/api/viewToken.js";
 import { goToItem, removeTrailingSlash, removeLastDir } from "@/utils/url.js";
 import LoadingSpinner from "@/components/LoadingSpinner.vue";
@@ -105,6 +85,7 @@ import { shouldUsePdfPreviewFallback } from "@/utils/pdfPreview.js";
 
 export default {
   name: "preview",
+  emits: ["open-error"],
   components: {
     LoadingSpinner,
     ExtendedImage: createAsyncComponent(() => import('@/components/files/ExtendedImage.vue')),
@@ -112,6 +93,8 @@ export default {
   },
   data() {
     return {
+      defaultOpenIdentity: "",
+      openErrorMessage: "",
       listing: null,
       name: "",
       fullSize: true,
@@ -258,18 +241,6 @@ export default {
     isDarkMode() {
       return getters.isDarkMode();
     },
-    downloadUrl() {
-      if (getters.isShare()) {
-        return resourcesApi.getDownloadURLPublic(
-          {
-            path: state.shareInfo.subPath,
-            hash: state.shareInfo.hash,
-          },
-          [state.req.path],
-        );
-      }
-      return resourcesApi.getDownloadURL(state.req.source, state.req.path);
-    },
     isTransitioning() {
       return state.navigation.isTransitioning;
     },
@@ -287,7 +258,10 @@ export default {
     req: {
       immediate: true,
       async handler() {
+        const identity = requestViewIdentity(state.req);
         await this.loadPreviewForReq();
+        if (identity !== requestViewIdentity(state.req)) return;
+        await this.fallbackIfUnsupported();
       },
     },
   },
@@ -301,6 +275,19 @@ export default {
     mutations.clearNavigation();
   },
   methods: {
+    async fallbackIfUnsupported() {
+      if (this.usePdfPreviewFallback || (!this.showImage && !this.isPdf && !['audio', 'video'].includes(this.previewType)) || !this.raw) {
+        await this.openPreviewFailure(new Error('内置查看器不支持或无法加载此文件'));
+      }
+    },
+    async openPreviewFailure(error) {
+      const identity = state.req.source + '\u0000' + state.req.path;
+      if (this.defaultOpenIdentity === identity) return;
+      this.defaultOpenIdentity = identity; this.openErrorMessage = error.message;
+      if (this.$vnode.props?.onOpenError) { this.$emit('open-error', error); return; }
+      try { await openOriginalWithDefaultApp(state.req.source, state.req.path); this.openErrorMessage += '；已交给系统关联应用打开原文件'; }
+      catch (failure) { this.openErrorMessage += '；系统应用打开失败：' + failure.message; }
+    },
     async attachDirMediaMetadata(listing, dirPath) {
       if (!listing?.length) return;
       try {

@@ -236,6 +236,7 @@
 </template>
 
 <script>
+import { openOriginalWithDefaultApp } from "@/works/api.js";
 import { resourcesApi, shareApi, usersApi } from "@/api";
 import Action from "@/components/Action.vue";
 import { notify } from "@/notify";
@@ -1019,13 +1020,7 @@ export default {
     goToRaw() {
       const source = state.req?.source || "";
       const path = state.req?.path || "";
-      const openUrl = getters.isShare()
-        ? resourcesApi.getOpenFileURL(source, path, {
-            path: state.shareInfo.subPath,
-            hash: state.shareInfo.hash,
-          })
-        : resourcesApi.getOpenFileURL(source, path);
-      window.open(openUrl, "_blank");
+      openOriginalWithDefaultApp(source, path).catch(error => notify.showError(error.message));
       mutations.closeHovers();
     },
     watchFile() {
