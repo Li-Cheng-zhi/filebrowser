@@ -5,8 +5,6 @@ import DirectoryPager from './DirectoryPager.vue';
 import { markRaw, nextTick } from 'vue';
 import DefaultBar from '@/views/bars/Default.vue';
 import { state, mutations, getters } from '@/store';
-import { fetchFiles } from '@/api/resources.js';
-import { contextTargetCommands } from '@/components/contextMenuTargets.js';
 import { bridge } from './api.js';
 import { activateHostChrome, attachHostCommands, cleanHost, directoryChromeState } from './hostChrome.js';
 import './hostChrome.css';
@@ -33,7 +31,6 @@ const hostedDirectoryLifecycle = {
     });
     window.worksFilesHost = this.chromeHost;
     attachHostCommands(this.chromeHost, {
-      ...contextTargetCommands({ state, mutations, getters }, fetchFiles),
       refresh: () => this.refresh(), open: () => this.openSelected(),
       newTab: () => this.openNewTab(), openRight: () => this.openRight(),
       trash: () => bridge({ action: 'trash' }),

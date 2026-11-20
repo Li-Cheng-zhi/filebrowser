@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { contextTargetCommands, withContextTargets } from '../components/contextMenuTargets.js';
 
 vi.mock('@/store', async () => {
   const { reactive } = await import('vue');
@@ -41,45 +40,6 @@ async function chrome(url = '/works/file?worksChrome=1&worksPage=doc-1') {
 }
 
 afterEach(() => { delete window.worksFilesHost; delete window.cefQuery; document.documentElement.classList.remove('works-hosted-chrome'); });
-
-describe('explicit file prompt targets', () => {
-  function fixture() {
-    const selected = [7];
-    const state = { selected, req: { source: 'rw', path: '/B' }, user: { scopes: [{ name: 'rw' }] }, navigation: { listing: [] } };
-    const mutations = { closeHovers: vi.fn(), closeTopPrompt: vi.fn(), showPrompt: vi.fn() };
-    const getters = { isShare: () => false, sourcePermissions: source => ({ modify: source === 'rw', delete: source === 'rw', create: source === 'rw', download: true }), canCreateInSource: source => source === 'rw' };
-    const fetchFiles = vi.fn(async (source, path) => ({ source, path, name: path.split('/').at(-1), type: path.endsWith('dir') ? 'directory' : 'file' }));
-    return { state, mutations, getters, fetchFiles, selected };
-  }
-  it('passes target A to rename while preserving the existing selected B and shares the mouse prompt entry', async () => {
-    const f = fixture(); const commands = contextTargetCommands(f, f.fetchFiles);
-    await commands.renameTarget({ source: 'rw', path: '/A.txt' });
-    const prompt = f.mutations.showPrompt.mock.calls[0][0];
-    expect(prompt).toEqual({ name: 'rename', props: { item: { source: 'rw', path: '/A.txt', name: 'A.txt', type: 'file' }, parentItems: [] } });
-    expect(f.fetchFiles).toHaveBeenCalledWith('rw', '/A.txt', false, true); expect(f.state.selected).toBe(f.selected); expect(f.state.selected).toEqual([7]);
-    const mouse = withContextTargets({ methods: {} }, f);
-    mouse.methods.showRenamePrompt.call({ selectedCount: 1, firstSelected: prompt.props.item });
-    expect(f.mutations.showPrompt.mock.calls[1][0]).toEqual(prompt);
-  });
-  it('passes existing copy/move/delete items and new-file/new-directory bases without adding save behavior', async () => {
-    const f = fixture(); const commands = contextTargetCommands(f, f.fetchFiles);
-    for (const name of ['copyTarget', 'moveTarget', 'deleteTarget']) await commands[name]({ source: 'rw', path: '/A.txt' });
-    expect(f.mutations.showPrompt.mock.calls.map(([prompt]) => prompt.name)).toEqual(['copy', 'move', 'delete']);
-    expect(f.mutations.showPrompt.mock.calls[0][0].props).toMatchObject({ items: [{ path: '/A.txt' }], operation: 'copy' });
-    await commands.newFileTarget({ source: 'rw', path: '/A-dir' }); await commands.newDirTarget({ source: 'rw', path: '/A-dir' });
-    expect(f.mutations.showPrompt.mock.calls.slice(3).map(([prompt]) => prompt.props.base)).toEqual([{ source: 'rw', path: '/A-dir' }, { source: 'rw', path: '/A-dir' }]);
-    expect(f.state.selected).toEqual([7]);
-  });
-  it('uses original source permissions and leaves unavailable actions without a prompt', async () => {
-    const f = fixture(); const commands = contextTargetCommands(f, f.fetchFiles);
-    expect(await commands.renameTarget({ source: 'ro', path: '/A.txt' })).toBe(false);
-    expect(await commands.moveTarget({ source: 'ro', path: '/A.txt' })).toBe(false);
-    expect(await commands.deleteTarget({ source: 'ro', path: '/A.txt' })).toBe(false);
-    expect(await commands.newFileTarget({ source: 'ro', path: '/A-dir' })).toBe(false);
-    expect(f.mutations.showPrompt).not.toHaveBeenCalled();
-    expect(await commands.copyTarget({ source: 'ro', path: '/A.txt' })).toBe(true);
-  });
-});
 
 describe('resource host chrome', () => {
   it('requires an explicit hosted document rather than the availability of cefQuery', async () => {

@@ -253,7 +253,6 @@ import { canNativeShare, nativeShareFile } from "@/utils/nativeShare";
 import { isRichTextPreviewMimeType, getTypeInfoFromExt } from "@/utils/mimetype";
 import { isMediaRequest } from "@/utils/mediaFile";
 import { expandBeforeEnter, expandEnter, expandLeave } from "@/utils/expandTransition";
-import { withContextTargets } from './contextMenuTargets.js';
 
 function isArchivePath(pathOrName) {
   if (!pathOrName || typeof pathOrName !== "string") return false;
@@ -261,7 +260,7 @@ function isArchivePath(pathOrName) {
   return lower.endsWith(".zip") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz");
 }
 
-export const contextMenuOriginal = {
+export default {
   name: "ContextMenu",
   inheritAttrs: false,
   components: {
@@ -1072,7 +1071,6 @@ export const contextMenuOriginal = {
     },
   },
 };
-export default withContextTargets(contextMenuOriginal, { state, getters, mutations });
 </script>
 
 <style scoped>
