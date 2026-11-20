@@ -21,13 +21,17 @@ export function activateHostChrome() {
 
 /** Commands are bound to one component's existing host, not a second global file implementation. */
 export function attachHostCommands(host, commands, publish, reportError) {
+  host.keyboardCommands = commands;
+  window.__worksDesktopKeyboard?.changedEditors();
   host.runCommand = async (name, arguments_ = {}) => {
     try {
       const command = commands[name];
       if (!command) throw new Error('当前页面不支持此操作');
-      await command(arguments_);
+      const result = await command(arguments_);
+      return result?.kind ? result : { kind: 'ORIGINAL_ACCEPTED' };
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error));
+      return { kind: 'FAILED', reason: error instanceof Error ? error.message : String(error) };
     } finally {
       await publish();
     }

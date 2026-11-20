@@ -26,6 +26,7 @@ import { resourcesApi } from '@/api';
 import { api,json,bridge,fileURL,pageId,openOriginalWithDefaultApp,isOpenedFileResource } from './api.js';
 import { TextSave,restoreText } from './save.js';
 import OfficePane from './OfficePane.vue';
+import { hostChromeEnabled } from './hostChrome.js';
 export default {
  components:{OfficePane,MarkdownViewer,Preview,EpubViewer},
  data(){return {source:String(this.$route.query.source||''),path:String(this.$route.query.path||''),canonical:'',mode:'view',allowedModes:['view'],right:this.$route.query.right==='1',owner:pageId(),loaded:false,textFile:false,office:false,original:'',status:'loading',lastPublishKey:'',message:'',conflict:null,raw:'',defaultOpenIdentity:'',binaryView:'',binaryInfo:null,svgUrl:'',model:null,editorInstance:null,saver:null,busy:false,autosave:null,autosavePaused:false,maxsave:null,heartbeat:null,generation:0,officeEnded:false,officeDirty:false,monaco:null,content:'',rendered:'',unsubscribe:null,baseVersion:'',lastSavedVersion:''}},
@@ -59,10 +60,11 @@ export default {
   changed(){if(!this.saver)return;this.status=this.saver.state;this.conflict=this.saver.conflict;this.content=this.saver.text;this.notifySaved(this.saver.version);this.publish()},
   notifySaved(version){if(!version)return;const previous=this.lastSavedVersion;this.lastSavedVersion=version;if(previous&&previous!==version)bridge({action:'saved',canonicalPath:this.canonical,source:this.source,path:this.path}).catch(()=>{})},
   publish(force=false){const key=JSON.stringify([this.canonical,this.mode,this.status,this.office?this.officeDirty:!!this.saver?.dirty,window.__worksWorkerStatus||{}]);if(!force&&key===this.lastPublishKey)return;this.lastPublishKey=key;api('works/lifecycle',{},json({owner:this.owner,canonicalPath:this.canonical,dirty:this.office?this.officeDirty:!!this.saver?.dirty,state:this.status})).catch(()=>{});bridge({action:'state',state:this.status,dirty:this.office?this.officeDirty:!!this.saver?.dirty,mode:this.mode,canonicalPath:this.canonical,workers:window.__worksWorkerStatus||{}}).catch(e=>{this.message=e.message})},
-  disposeEditor(){this.compositionStart?.dispose();this.compositionEnd?.dispose();this.composing=false;this.unsubscribe?.dispose();this.unsubscribe=null;this.editorInstance?.dispose();this.model?.dispose();this.editorInstance=null;this.model=null},
+  disposeEditor(){this.desktopKeyboardRelease?.();this.desktopKeyboardRelease=null;this.compositionStart?.dispose();this.compositionEnd?.dispose();this.composing=false;this.unsubscribe?.dispose();this.unsubscribe=null;this.editorInstance?.dispose();this.model?.dispose();this.editorInstance=null;this.model=null},
   async mountEditor(){this.disposeEditor();if(!this.textFile||((this.markdown||this.svg)&&this.mode==='view'))return;try{
    this.monaco=(await import('./monaco.js')).default;await this.$nextTick();if(!this.$refs.editor)return;
    const uri=this.monaco.Uri.parse('file://'+this.canonical);this.model=markRaw(this.monaco.editor.createModel(this.saver.text,undefined,uri));this.editorInstance=markRaw(this.monaco.editor.create(this.$refs.editor,{model:this.model,readOnly:this.mode==='view'||this.right,automaticLayout:true,minimap:{enabled:false},fontSize:14,wordWrap:this.markdown?'on':'off',scrollBeyondLastLine:false}));
+   if(hostChromeEnabled(this.$route))this.desktopKeyboardRelease=(await import('./desktopKeyboardMonaco.js')).registerDesktopMonaco(this.editorInstance,this.monaco);
    this.compositionStart=this.editorInstance.onDidCompositionStart(()=>{this.composing=true;clearTimeout(this.autosave);clearTimeout(this.maxsave);this.maxsave=null});this.compositionEnd=this.editorInstance.onDidCompositionEnd(()=>{this.composing=false;if(this.saver?.dirty)this.scheduleSave()});
    this.unsubscribe=this.model.onDidChangeContent(()=>{if(this.mode==='view'||this.right)return;this.saver.edit(restoreText(this.model.getValue(),this.original));this.scheduleSave()});
    setTimeout(()=>this.publish(),1200);console.warn('[WorksFiles] Monaco mounted',JSON.stringify({width:this.$refs.editor.clientWidth,height:this.$refs.editor.clientHeight,lines:this.model.getLineCount()}));

@@ -8,6 +8,8 @@ import { state, mutations, getters } from '@/store';
 import { bridge } from './api.js';
 import { activateHostChrome, attachHostCommands, cleanHost, directoryChromeState } from './hostChrome.js';
 import './hostChrome.css';
+import { desktopContextMenuTargets } from '@/components/contextMenuTargets.js';
+import { resourcesApi } from '@/api';
 
 /** @type {import('vue').ComponentOptions} */
 const hostedDirectoryLifecycle = {
@@ -30,7 +32,12 @@ const hostedDirectoryLifecycle = {
       openMain: () => bridge({ action: 'open', source: state.req.source, path: state.req.path, target: 'main' }),
     });
     window.worksFilesHost = this.chromeHost;
+    const targetAction = desktopContextMenuTargets({ mutations, getters, read: async (source, path) => {
+      const result = await resourcesApi.fetchFiles(source, path, false, true);
+      return { ...result, source: result.source || source, path: result.path ?? path, name: result.name || path.split('/').filter(Boolean).at(-1) || '.', isDir: result.isDir || result.type === 'directory' };
+    } });
     attachHostCommands(this.chromeHost, {
+      ...Object.fromEntries(['renameTarget', 'copyTarget', 'moveTarget', 'deleteTarget', 'newFileTarget', 'newDirTarget'].map(word => [word, args => targetAction(word, args)])),
       refresh: () => this.refresh(), open: () => this.openSelected(),
       newTab: () => this.openNewTab(), openRight: () => this.openRight(),
       trash: () => bridge({ action: 'trash' }),

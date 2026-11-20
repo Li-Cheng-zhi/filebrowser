@@ -237,6 +237,7 @@
 
 <script>
 import { openOriginalWithDefaultApp } from "@/works/api.js";
+import { contextMenuTargetPrompt } from "./contextMenuTargets.js";
 import { resourcesApi, shareApi, usersApi } from "@/api";
 import Action from "@/components/Action.vue";
 import { notify } from "@/notify";
@@ -797,26 +798,10 @@ export default {
       });
     },
     showRenamePrompt() {
-      mutations.closeHovers();
-      mutations.showPrompt({
-        name: "rename",
-        props: {
-          item: this.selectedCount === 1 ? this.firstSelected : state.req,
-          parentItems: []
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'rename', [this.selectedCount === 1 ? this.firstSelected : state.req]);
     },
     showRenamePromptForPreview() {
-      mutations.closeHovers(); // Close the ContextMenu (if it was open from preview)
-      // Get parent items from the listing
-      const parentItems = state.navigation.listing || [];
-      mutations.showPrompt({
-        name: "rename",
-        props: {
-          item: state.req,
-          parentItems: parentItems,
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'rename', [state.req], null, state.navigation.listing || []);
     },
     setPositions() {
       const contextProps = getters.currentPrompt().props;
@@ -859,13 +844,7 @@ export default {
       });
     },
     createEmptyFile() {
-      mutations.closeHovers();
-      mutations.showPrompt({
-        name: "newFile",
-        props: {
-          base: this.templateBase(),
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'newFile', [], this.templateBase());
     },
     toggleMultipleSelection() {
       mutations.setMultiple(true);
@@ -888,33 +867,13 @@ export default {
       await nativeShareFile(this.req);
     },
     showDeletePrompt() {
-      mutations.closeTopPrompt();
-      mutations.showPrompt({
-        name: 'delete',
-        props: {
-          items: this.providedItems,
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'delete', this.providedItems);
     },
     showMovePrompt() {
-      mutations.closeHovers();
-      mutations.showPrompt({
-        name: 'move',
-        props: {
-          items: this.providedItems,
-          operation: 'move',
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'move', this.providedItems);
     },
     showCopyPrompt() {
-      mutations.closeHovers();
-      mutations.showPrompt({
-        name: 'copy',
-        props: {
-          items: this.providedItems,
-          operation: 'copy',
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'copy', this.providedItems);
     },
     async togglePin() {
       const item = this.firstSelected;
@@ -960,7 +919,6 @@ export default {
       mutations.closeHovers();
     },
     showNewDirPrompt() {
-      mutations.closeHovers();
       // If the context menu was triggered on a directory, pass its path as base
       const selectedItem = this.firstSelected;
       let base = null;
@@ -971,12 +929,7 @@ export default {
           source: selectedItem.source,
         };
       }
-      mutations.showPrompt({
-        name: "newDir",
-        props: {
-          base: base,
-        },
-      });
+      return contextMenuTargetPrompt(mutations, 'newDir', [], base);
     },
     showArchivePrompt() {
       mutations.closeTopPrompt();
