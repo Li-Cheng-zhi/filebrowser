@@ -66,6 +66,38 @@ describe('production keyboard document boundary', () => {
     expect((await bridge.apply({ targetId: childId, operation: 'activate', arguments: {} })).kind).toBe('APPLIED');
     expect(actions).toEqual(['parent', 'child']);
   });
+  it('omits window hosts at discovery while keeping descendants, mouse observations and scroll models', () => {
+    document.body.innerHTML = '<main id="app" tabindex="0"><section id="pane"><button>child</button><p>body block</p></section></main>';
+    const app = document.getElementById('app'), pane = document.getElementById('pane'), button = document.querySelector('button'), paragraph = document.querySelector('p');
+    for (const host of [document.documentElement, document.body, app, pane]) box(host, 0, 0, window.innerWidth, window.innerHeight);
+    box(button, 10, 10); box(paragraph, 10, 40, 80, 20);
+    Object.defineProperties(app, { clientHeight: { value: window.innerHeight }, scrollHeight: { value: window.innerHeight + 320 } });
+    const observed = [], original = []; app.addEventListener('click', () => original.push('click'));
+    app.addEventListener('mousedown', () => original.push('mouse')); app.addEventListener('focusin', () => original.push('focus'));
+    bridge = createBridge(window, async data => { observed.push(data); return {}; });
+    const hosts = [document.documentElement, document.body, app, pane]; bridge.native(hosts.map(node => ({ node, clickable: true })));
+    const targets = bridge.snapshot().targets, hostIds = hosts.map(node => bridge.identify(node));
+    expect(targets.map(target => target.id)).not.toEqual(expect.arrayContaining(hostIds));
+    expect(targets.some(target => hostIds.includes(target.id))).toBe(false);
+    expect(targets.map(target => target.label)).toEqual(['child', 'body block']);
+    expect(targets.every(target => target.ancestors.includes(bridge.identify(app)))).toBe(true);
+    expect(bridge.extent(bridge.identify(app), 'Y').range).toBe(320);
+    app.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); app.click(); app.focus();
+    expect(original).toEqual(['mouse', 'click', 'focus']);
+    expect(observed.filter(data => data.action === 'interaction').map(data => [data.targetId, data.mouse])).toEqual([[bridge.identify(app), true], [bridge.identify(app), false]]);
+    paragraph.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    expect(observed.at(-1).targetId).toBe(`${bridge.identify(paragraph)}/copy`);
+  });
+  it('keeps a full-size semantic control and its child as independent actions', async () => {
+    document.body.innerHTML = '<div role="button" id="control"><button>child</button></div>';
+    const parent = document.getElementById('control'), child = parent.firstElementChild, actions = [];
+    box(parent, 0, 0, window.innerWidth, window.innerHeight); box(child, 10, 10);
+    parent.addEventListener('click', () => actions.push('parent')); child.addEventListener('click', event => { event.stopPropagation(); actions.push('child'); });
+    bridge = createBridge(window, async () => ({})); const targets = bridge.snapshot().targets;
+    expect(targets).toHaveLength(2);
+    await bridge.apply({ targetId: bridge.identify(parent), operation: 'activate' }); await bridge.apply({ targetId: bridge.identify(child), operation: 'activate' });
+    expect(actions).toEqual(['parent', 'child']);
+  });
   it('retains actual offscreen focus while marking it ineligible for a new blue selection', async () => {
     document.body.innerHTML = '<a href="/ok">offscreen</a><button>visible</button><textarea></textarea>';
     const link = document.querySelector('a'); box(link, -288, 10, 256, 20); box(document.querySelector('button')); box(document.querySelector('textarea'));
@@ -173,7 +205,7 @@ describe('production keyboard document boundary', () => {
     }
     expect(original).toHaveLength(16); expect(observed.filter(data => data.action === 'key')).toHaveLength(0);
   });
-  it('preserves unmatched Escape and uppercase C, and owns lowercase c only in the original web control scope', () => {
+  it('passes C and unmatched Escape and arrows on read-only blocks while Enter stays in window mode', () => {
     document.body.innerHTML = '<button>original control</button>'; box(document.querySelector('button'));
     bridge = createBridge(window, async () => ({}));
     function press(key) {
@@ -183,8 +215,9 @@ describe('production keyboard document boundary', () => {
       return event.defaultPrevented;
     }
     expect(press('Escape')).toBe(false); expect(press('C')).toBe(false); expect(press('c')).toBe(false);
-    bridge.render({ mode: 'WINDOW', paragraphsAvailable: true }); expect(press('c')).toBe(true);
-    bridge.render({ mode: 'PARAGRAPHS', paragraphsAvailable: true }); expect(press('c')).toBe(false); expect(press('Escape')).toBe(true);
+    bridge.render({ mode: 'WINDOW', targetId: bridge.identify(document.querySelector('button')) });
+    expect(press('c')).toBe(false); expect(press('C')).toBe(false); expect(press('Escape')).toBe(false); expect(press('ArrowRight')).toBe(false);
+    expect(press('Enter')).toBe(true);
   });
   it('publishes and invokes original page actions without substituting a selected node', async () => {
     let calls = 0; window.__worksDesktopKeyboardPageActions = { compile: () => { calls++; } };
@@ -221,36 +254,44 @@ describe('production keyboard document boundary', () => {
     expect(prompts.length).toBe(count); expect(errors).toHaveLength(1); expect(published).toBe(7);
     expect(reads.every(([source]) => source === 'other-backend')).toBe(true); expect(hovers).toContain('top');
   });
-  it('navigates original paragraph blocks, selects real text, copies only its selection and exits without clicking links', async () => {
+  it('includes original leaf blocks in window mode and copies current whole text without selecting or clicking links', async () => {
     document.body.innerHTML = '<blockquote><p>abcd<a href="/link">efgh</a></p></blockquote><ul><li><p>second</p></li></ul>';
     document.querySelectorAll('body *').forEach(element => box(element, 10, 10, 80, 64)); rangeLayout();
     const observed = []; let clicks = 0; document.querySelector('a').addEventListener('click', () => { clicks++; });
     bridge = createBridge(window, async data => { observed.push(data); return {}; });
-    expect(bridge.snapshot().targets).toHaveLength(1);
-    bridge.render({ mode: 'PARAGRAPHS', targetId: null });
-    const paragraphs = bridge.snapshot().targets; expect(paragraphs.map(item => item.label)).toEqual(['abcdefgh', 'second']);
+    const snapshot = bridge.snapshot(), paragraphs = snapshot.targets.filter(target => target.capabilities.includes('COPY'));
+    expect(snapshot.targets).toHaveLength(3);
+    expect(paragraphs.map(item => item.label)).toEqual(['abcdefgh', 'second']);
+    expect(paragraphs.every(item => item.capabilities.join(',') === 'ACTIVATE,COPY')).toBe(true);
     const id = paragraphs[0].id;
+    const linkId = bridge.identify(document.querySelector('a'));
+    expect(id).not.toBe(linkId); bridge.render({ mode: 'WINDOW', targetId: id });
     expect((await bridge.apply({ targetId: id, operation: 'paragraph-copy' })).copiedText).toBe('abcdefgh');
-    expect((await bridge.apply({ targetId: id, operation: 'block-enter' })).kind).toBe('APPLIED');
-    bridge.render({ mode: 'BLOCK_TEXT', targetId: id });
-    expect(document.querySelector('[data-works-keyboard-decoration=caret]').style.display).toBe('block');
-    const revision = bridge.text(id).revision;
-    expect((await bridge.apply({ targetId: id, operation: 'select', arguments: { anchor: '1', caret: '6', text: 'abcdefgh', revision } })).kind).toBe('APPLIED');
-    expect(window.getSelection().toString()).toBe('bcdef');
-    expect((await bridge.apply({ targetId: id, operation: 'selection-copy' })).copiedText).toBe('bcdef');
+    const paragraph = document.querySelector('p'); paragraph.firstChild.data = 'updated ';
+    expect(bridge.snapshot().targets.find(target => target.id === id).label).toBe('updated efgh');
+    expect((await bridge.apply({ targetId: id, operation: 'paragraph-copy' })).copiedText).toBe('updated efgh');
+    expect(bridge.text(id)).toBeNull();
+    expect((await bridge.apply({ targetId: id, operation: 'select', arguments: { anchor: '1', caret: '6', text: 'updated efgh' } })).kind).toBe('UNAVAILABLE');
+    expect(document.querySelector('[data-works-keyboard-decoration=caret]')).toBeNull();
+    expect(window.getSelection().toString()).toBe(''); expect(clicks).toBe(0);
     const arrow = new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', ctrlKey: true, bubbles: true, cancelable: true });
     document.body.dispatchEvent(arrow); document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true, cancelable: true }));
-    expect(arrow.defaultPrevented).toBe(true); expect(observed.filter(item => item.action === 'key').map(item => item.targetId)).toEqual([id, id]);
-    const letter = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true }); document.body.dispatchEvent(letter); expect(letter.defaultPrevented).toBe(false);
-    await bridge.apply({ targetId: paragraphs[1].id, operation: 'block-enter' });
-    expect((await bridge.apply({ targetId: id, operation: 'selection-copy' })).kind).toBe('UNAVAILABLE');
-    await bridge.apply({ targetId: id, operation: 'block-enter' });
-    expect((await bridge.apply({ targetId: id, operation: 'selection-copy' })).kind).toBe('UNAVAILABLE');
-    await bridge.apply({ targetId: id, operation: 'block-exit' }); bridge.render({ mode: 'PARAGRAPHS', targetId: id });
-    expect(window.getSelection().rangeCount).toBe(0); expect(document.querySelector('[data-works-keyboard-decoration=caret]').style.display).toBe('none'); expect(clicks).toBe(0);
+    expect(arrow.defaultPrevented).toBe(false); expect(observed.filter(item => item.action === 'key')).toHaveLength(0);
+    const letter = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true }); document.body.dispatchEvent(letter); expect(letter.defaultPrevented).toBe(true);
+    document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'j', bubbles: true, cancelable: true }));
+    expect((await bridge.apply({ targetId: linkId, operation: 'activate' })).kind).toBe('APPLIED'); expect(clicks).toBe(1);
+  });
+  it('keeps an original clickable block and its copy action at the same rectangle under separate identities', async () => {
+    document.body.innerHTML = '<p>original body</p>'; const paragraph = document.querySelector('p'); box(paragraph);
+    let clicks = 0; paragraph.addEventListener('click', () => { clicks++; });
+    bridge = createBridge(window, async () => ({})); bridge.native([{ node: paragraph, clickable: true }]);
+    const targets = bridge.snapshot().targets;
+    expect(targets).toHaveLength(2); expect(targets[0].id).not.toBe(targets[1].id); expect(targets[0].rect).toEqual(targets[1].rect);
+    expect((await bridge.apply({ targetId: targets[1].id, operation: 'paragraph-copy' })).copiedText).toBe('original body'); expect(clicks).toBe(0);
+    await bridge.apply({ targetId: targets[0].id, operation: 'activate' }); expect(clicks).toBe(1);
   });
   it('rejects the old text generation even if bytes were restored, and reveals the original Range along its scroll ancestor', async () => {
-    document.body.innerHTML = '<div id="scroll" style="overflow-y:auto"><p>abcdefghijklmnop</p></div>';
+    document.body.innerHTML = '<div id="scroll" style="overflow-y:auto"><p contenteditable="true">abcdefghijklmnop</p></div>';
     const scroller = document.getElementById('scroll'), paragraph = document.querySelector('p');
     box(scroller, 10, 10, 80, 40); box(paragraph, 10, 10, 80, 64); rangeLayout();
     Object.defineProperties(scroller, { scrollHeight: { value: 100 }, clientHeight: { value: 40 } });
@@ -258,7 +299,7 @@ describe('production keyboard document boundary', () => {
     const old = bridge.text(id); paragraph.firstChild.data = 'changed'; paragraph.firstChild.data = old.text;
     expect(bridge.text(id).revision).not.toBe(old.revision);
     expect((await bridge.apply({ targetId: id, operation: 'editor-action', arguments: { word: 'copy', anchor: '0', caret: '1', revision: old.revision } })).kind).toBe('STALE');
-    bridge.render({ mode: 'BLOCK_TEXT', targetId: id });
+    bridge.render({ mode: 'TEXT', targetId: id, editableFocus: true });
     expect((await bridge.apply({ targetId: id, operation: 'select', arguments: { anchor: '12', caret: '12', text: old.text } })).kind).toBe('APPLIED');
     expect(scroller.scrollTop).toBeGreaterThan(0); expect(window.getSelection().focusNode).toBe(paragraph.firstChild); expect(window.getSelection().focusOffset).toBe(12);
   });
