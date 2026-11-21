@@ -6,7 +6,8 @@ import { registerDesktopMonaco } from './desktopKeyboardMonaco.js';
 import { contextMenuTargetPrompt, desktopContextMenuTargets } from '../components/contextMenuTargets.js';
 import { attachHostCommands } from './hostChrome.js';
 const source = readFileSync(resolve(process.cwd(), '../../../../desktop/appshell/shell/DesktopKeyboardBrowser.js'), 'utf8');
-const sandbox = { module: { exports: {} } }; vm.runInNewContext(source, sandbox);
+const repairSource = readFileSync(resolve(process.cwd(), '../../../../desktop/appshell/shell/DesktopKeyboardBrowserRepair.js'), 'utf8');
+const sandbox = { module: { exports: {} } }; vm.runInNewContext(repairSource, sandbox); vm.runInNewContext(source, sandbox);
 const { createBridge } = sandbox.module.exports;
 let bridge;
 const originalRangeRects = window.Range.prototype.getClientRects;
@@ -62,9 +63,10 @@ describe('production keyboard document boundary', () => {
     const parentId = targets.find(target => target.label === 'parent action').id;
     const childId = targets.find(target => target.label === 'child action').id;
     expect(parentId).not.toBe(childId);
-    expect((await bridge.apply({ targetId: parentId, operation: 'activate', arguments: {} })).kind).toBe('APPLIED');
-    expect((await bridge.apply({ targetId: childId, operation: 'activate', arguments: {} })).kind).toBe('APPLIED');
-    expect(actions).toEqual(['parent', 'child']);
+    expect(bridge.pointer(parentId)).not.toBeNull(); expect(bridge.pointer(childId)).not.toBeNull();
+    expect((await bridge.apply({ targetId: parentId, operation: 'activate', arguments: {} })).kind).toBe('UNAVAILABLE');
+    expect((await bridge.apply({ targetId: childId, operation: 'activate', arguments: {} })).kind).toBe('UNAVAILABLE');
+    expect(actions).toEqual([]);
   });
   it('omits window hosts at discovery while keeping descendants, mouse observations and scroll models', () => {
     document.body.innerHTML = '<main id="app" tabindex="0"><section id="pane"><button>child</button><p>body block</p></section></main>';
@@ -95,8 +97,8 @@ describe('production keyboard document boundary', () => {
     parent.addEventListener('click', () => actions.push('parent')); child.addEventListener('click', event => { event.stopPropagation(); actions.push('child'); });
     bridge = createBridge(window, async () => ({})); const targets = bridge.snapshot().targets;
     expect(targets).toHaveLength(2);
-    await bridge.apply({ targetId: bridge.identify(parent), operation: 'activate' }); await bridge.apply({ targetId: bridge.identify(child), operation: 'activate' });
-    expect(actions).toEqual(['parent', 'child']);
+    expect(bridge.pointer(bridge.identify(parent))).not.toBeNull(); expect(bridge.pointer(bridge.identify(child))).not.toBeNull();
+    expect(actions).toEqual([]);
   });
   it('retains actual offscreen focus while marking it ineligible for a new blue selection', async () => {
     document.body.innerHTML = '<a href="/ok">offscreen</a><button>visible</button><textarea></textarea>';
@@ -122,7 +124,7 @@ describe('production keyboard document boundary', () => {
     bridge = createBridge(window, async () => ({})); bridge.native([{ node: button, clickable: true }]);
     const id = bridge.identify(button);
     expect(bridge.snapshot().targets.some(target => target.id === id)).toBe(true);
-    expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('APPLIED'); expect(clicks).toBe(1);
+    expect(bridge.pointer(id)).not.toBeNull(); expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('UNAVAILABLE'); expect(clicks).toBe(0);
     const parent = bridge.frameAncestors(frame); expect(parent.nonce).toBe(bridge.nonce);
     expect(parent.ancestors).toContain(bridge.identify(scroller)); expect(parent.ancestors).not.toContain(bridge.identify(document.getElementById('other')));
     bridge.native([]); expect(bridge.snapshot().targets.some(target => target.id === id)).toBe(false);
@@ -132,8 +134,8 @@ describe('production keyboard document boundary', () => {
     let clicks = 0; button.addEventListener('click', () => { clicks++; });
     bridge = createBridge(window, async () => ({})); const id = bridge.snapshot().targets[0].id;
     bridge.render({ mode: 'WINDOW', targetId: id });
-    expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('APPLIED'); expect(clicks).toBe(1);
-    button.replaceWith(button.cloneNode(true)); expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('STALE'); expect(clicks).toBe(1);
+    expect(bridge.pointer(id)).not.toBeNull(); expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('UNAVAILABLE'); expect(clicks).toBe(0);
+    button.replaceWith(button.cloneNode(true)); expect(bridge.pointer(id)).toBeNull(); expect((await bridge.apply({ targetId: id, operation: 'activate' })).kind).toBe('STALE'); expect(clicks).toBe(0);
   });
   it('uses the actual scroll dimensions and releases key-up by physical code', async () => {
     document.body.innerHTML = '<div id="scroll"><button>B</button></div>'; const element = document.getElementById('scroll'); box(element);
@@ -180,7 +182,7 @@ describe('production keyboard document boundary', () => {
     input.addEventListener('keydown', event => { if (event.key === 'Escape') { originalEscapes++; input.setAttribute('aria-expanded', 'false'); choices.style.display = 'none'; } });
     bridge = createBridge(window, async data => { observed.push(data); return {}; }); input.focus();
     const id = bridge.identify(input), current = bridge.list(id);
-    expect(current.items).toHaveLength(2); expect(current.items[1].enabled).toBe(false);
+    expect(current.items).toHaveLength(2); expect(current.items[1].enabled).toBe(true);
     const down = new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, ctrlKey: true, bubbles: true, cancelable: true });
     input.dispatchEvent(down); expect(down.defaultPrevented).toBe(true);
     const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }); input.dispatchEvent(enter);
@@ -204,6 +206,76 @@ describe('production keyboard document boundary', () => {
       }
     }
     expect(original).toHaveLength(16); expect(observed.filter(data => data.action === 'key')).toHaveLength(0);
+  });
+  it('releases a stale owned Enter when its native key-up was consumed before DOM delivery', () => {
+    document.body.innerHTML = '<button>open input</button><input>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const events = [], input = document.querySelector('input'); bridge = createBridge(window, async value => { events.push(value); return {}; });
+    const activate = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(activate); expect(activate.defaultPrevented).toBe(true);
+    // The host consumes that press's UP after focus crosses into CEF. The next
+    // physical DOWN is an ordinary input Enter with its own original UP.
+    input.focus();
+    for (const type of ['keydown', 'keyup']) {
+      const event = new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+      input.dispatchEvent(event); expect(event.defaultPrevented).toBe(false);
+    }
+    expect(events.filter(value => value.action === 'key').map(value => value.phase)).toEqual(['DOWN']);
+    bridge.render({ mode: 'PALETTE', scope: 'window', targetId: null });
+    for (const key of ['j', 'Enter', 'ArrowDown']) for (const type of ['keydown', 'keyup']) {
+      const event = new KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event); expect(event.defaultPrevented).toBe(false);
+    }
+  });
+  it('reads replaced native input shadow text without retaining old text nodes or exposing UA controls', () => {
+    document.body.innerHTML = '<input value="old">'; const input = document.querySelector('input'); box(input, 10, 10, 100, 40); rangeLayout();
+    // jsdom has no native input shadow tree. Supply that boundary as a real
+    // DocumentFragment; text, Range and input selection remain original DOM.
+    const root = document.createDocumentFragment(), editor = document.createElement('div');
+    Object.defineProperties(root, { host: { value: input }, isConnected: { get: () => input.isConnected } });
+    editor.textContent = 'old'; box(editor, 10, 10, 100, 40); root.appendChild(editor);
+    bridge = createBridge(window, async () => ({})); bridge.native([{ node: root, clickable: false }]);
+    const id = bridge.identify(input), previous = bridge.text(id); expect(previous.text).toBe('old');
+    editor.textContent = 'new value'; input.value = 'new value';
+    expect(bridge.text(id).text).toBe('new value'); expect(bridge.text(id).revision).not.toBe(previous.revision);
+    expect(bridge.snapshot().targets.map(value => value.id)).toEqual([id]);
+    input.type = 'number'; expect(bridge.text(id)).toBeNull();
+    const arrow = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }); input.dispatchEvent(arrow);
+    expect(arrow.defaultPrevented).toBe(false);
+  });
+  it('invalidates native layout on inner scrolling and resize while retaining root-scroll structure', () => {
+    document.body.innerHTML = '<div id="scroll"><button>action</button></div>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const frames = [], events = [], original = window.requestAnimationFrame;
+    window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    try {
+      bridge = createBridge(window, async value => { events.push(value); return {}; });
+      document.dispatchEvent(new Event('scroll')); frames.shift()(); events.length = 0;
+      document.dispatchEvent(new Event('scroll')); frames.shift()(); expect(events.at(-1).native).toBe(false);
+      document.getElementById('scroll').dispatchEvent(new Event('scroll')); frames.shift()(); expect(events.at(-1).native).toBe(true);
+      window.dispatchEvent(new Event('resize')); frames.shift()(); expect(events.at(-1).native).toBe(true);
+    } finally { window.requestAnimationFrame = original; }
+  });
+  it('refreshes CSS-only visibility once per actual hover target without a render feedback loop', async () => {
+    document.body.innerHTML = '<button id="owner">owner</button><button id="revealed">revealed</button>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const owner = document.getElementById('owner'), revealed = document.getElementById('revealed'); let hovered = false;
+    const frames = [], events = [], originalFrame = window.requestAnimationFrame, originalStyle = window.getComputedStyle;
+    window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    window.getComputedStyle = element => {
+      const style = originalStyle.call(window, element);
+      return element === revealed ? new Proxy(style, { get: (target, name) => name === 'visibility' ? hovered ? 'visible' : 'hidden' : Reflect.get(target, name, target) }) : style;
+    };
+    try {
+      bridge = createBridge(window, async value => { events.push(value); return {}; }); const id = bridge.identify(revealed);
+      expect(bridge.snapshot().targets.find(value => value.id === id).visible).toBe(false);
+      hovered = true;
+      for (let index = 0; index < 30; index++) owner.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+      expect(frames).toHaveLength(1); frames.shift()();
+      expect(bridge.snapshot().targets.find(value => value.id === id).visible).toBe(true);
+      for (let index = 0; index < 30; index++) bridge.render({ mode: 'WINDOW', scope: 'window', targetId: bridge.identify(owner) });
+      await Promise.resolve(); expect(frames).toHaveLength(0); expect(events.filter(value => value.action === 'dirty')).toHaveLength(1);
+    } finally { window.requestAnimationFrame = originalFrame; window.getComputedStyle = originalStyle; }
   });
   it('passes C and unmatched Escape and arrows on read-only blocks while Enter stays in window mode', () => {
     document.body.innerHTML = '<button>original control</button>'; box(document.querySelector('button'));
@@ -279,7 +351,7 @@ describe('production keyboard document boundary', () => {
     expect(arrow.defaultPrevented).toBe(false); expect(observed.filter(item => item.action === 'key')).toHaveLength(0);
     const letter = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true }); document.body.dispatchEvent(letter); expect(letter.defaultPrevented).toBe(true);
     document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'j', bubbles: true, cancelable: true }));
-    expect((await bridge.apply({ targetId: linkId, operation: 'activate' })).kind).toBe('APPLIED'); expect(clicks).toBe(1);
+    expect(bridge.pointer(linkId)).not.toBeNull(); expect((await bridge.apply({ targetId: linkId, operation: 'activate' })).kind).toBe('UNAVAILABLE'); expect(clicks).toBe(0);
   });
   it('keeps an original clickable block and its copy action at the same rectangle under separate identities', async () => {
     document.body.innerHTML = '<p>original body</p>'; const paragraph = document.querySelector('p'); box(paragraph);
@@ -288,7 +360,7 @@ describe('production keyboard document boundary', () => {
     const targets = bridge.snapshot().targets;
     expect(targets).toHaveLength(2); expect(targets[0].id).not.toBe(targets[1].id); expect(targets[0].rect).toEqual(targets[1].rect);
     expect((await bridge.apply({ targetId: targets[1].id, operation: 'paragraph-copy' })).copiedText).toBe('original body'); expect(clicks).toBe(0);
-    await bridge.apply({ targetId: targets[0].id, operation: 'activate' }); expect(clicks).toBe(1);
+    expect(bridge.pointer(targets[0].id)).not.toBeNull(); await bridge.apply({ targetId: targets[0].id, operation: 'activate' }); expect(clicks).toBe(0);
   });
   it('rejects the old text generation even if bytes were restored, and reveals the original Range along its scroll ancestor', async () => {
     document.body.innerHTML = '<div id="scroll" style="overflow-y:auto"><p contenteditable="true">abcdefghijklmnop</p></div>';
@@ -302,5 +374,88 @@ describe('production keyboard document boundary', () => {
     bridge.render({ mode: 'TEXT', targetId: id, editableFocus: true });
     expect((await bridge.apply({ targetId: id, operation: 'select', arguments: { anchor: '12', caret: '12', text: old.text } })).kind).toBe('APPLIED');
     expect(scroller.scrollTop).toBeGreaterThan(0); expect(window.getSelection().focusNode).toBe(paragraph.firstChild); expect(window.getSelection().focusOffset).toBe(12);
+  });
+  it('keeps dialog spatial scope, menu scope and readonly copy blocks distinct', () => {
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"><p>dialog body</p><button>dialog action</button></div>';
+    document.querySelectorAll('body *').forEach(element => box(element, 10, 10, 100, 80));
+    bridge = createBridge(window, async () => ({}));
+    const snapshot = bridge.snapshot(), dialog = document.querySelector('[role=dialog]');
+    expect(snapshot.scopeMode).toBe('WINDOW'); expect(snapshot.activeScope).toBe(bridge.identify(dialog));
+    expect(snapshot.targets.filter(value => value.capabilities.includes('COPY'))).toHaveLength(1);
+    expect(snapshot.targets.every(value => value.scope === snapshot.activeScope)).toBe(true);
+    bridge.dispose(); document.body.innerHTML = '<div role="menu"><button role="menuitem">menu action</button></div>';
+    document.querySelectorAll('body *').forEach(element => box(element)); bridge = createBridge(window, async () => ({}));
+    expect(bridge.snapshot().scopeMode).toBe('MENU');
+  });
+  it('keeps independent editor buttons out of text routing and observes actual focus loss', () => {
+    document.body.innerHTML = '<div id="editor"><textarea></textarea><button>editor action</button></div><input id="other">';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const editor = document.getElementById('editor'), button = document.querySelector('button'), events = [];
+    window.__worksDesktopKeyboardEditors = new Map([[editor, { geometry: () => null }]]);
+    bridge = createBridge(window, async value => { events.push(value); return {}; });
+    const target = bridge.snapshot().targets.find(value => value.id === bridge.identify(button));
+    expect(target.capabilities).toEqual(['ACTIVATE']);
+    button.focus(); expect(events.findLast(value => value.action === 'interaction')?.editable).toBe(false);
+    document.querySelector('textarea').focus(); document.getElementById('other').focus();
+    expect(events.some(value => value.action === 'focus-lost' && value.targetId === bridge.identify(editor))).toBe(true);
+    window.__worksDesktopKeyboardEditors.delete(editor); bridge.changedEditors();
+    expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(editor))).toBe(false);
+    window.__worksDesktopKeyboardEditors.clear();
+  });
+  it('does not treat ARIA disabled as native disabled and leaves activation to the host input', async () => {
+    document.body.innerHTML = '<button aria-disabled="true">aria</button><button disabled>native</button>';
+    document.querySelectorAll('button').forEach(element => box(element)); bridge = createBridge(window, async () => ({}));
+    const targets = bridge.snapshot().targets; expect(targets.map(value => value.enabled)).toEqual([true, false]);
+    for (const target of targets) expect(bridge.pointer(target.id)).not.toBeNull();
+    expect((await bridge.apply({ targetId: targets[0].id, operation: 'activate' })).kind).toBe('UNAVAILABLE');
+  });
+  it('uses indexed discovery and scopes without rescanning the document per key or snapshot', async () => {
+    document.body.innerHTML = '<div><button>existing</button></div>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const original = document.querySelectorAll; let scans = 0;
+    document.querySelectorAll = function (...args) { scans++; return original.apply(this, args); };
+    try {
+      bridge = createBridge(window, async () => ({})); const initial = scans;
+      for (let index = 0; index < 30; index++) {
+        bridge.snapshot(); document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', code: 'KeyJ', bubbles: true, cancelable: true }));
+        document.body.dispatchEvent(new KeyboardEvent('keyup', { key: 'j', code: 'KeyJ', bubbles: true, cancelable: true }));
+      }
+      expect(scans).toBe(initial);
+      const button = document.createElement('button'); button.textContent = 'added'; box(button); document.body.appendChild(button);
+      await Promise.resolve();
+      expect(bridge.snapshot().targets.some(value => value.label === 'added')).toBe(true); expect(scans).toBe(initial);
+      button.remove(); await Promise.resolve(); expect(bridge.snapshot().targets.some(value => value.label === 'added')).toBe(false);
+    } finally { document.querySelectorAll = original; }
+  });
+  it('observes hover scroll ancestry even when the hovered object is absent from clickable candidates', () => {
+    document.body.innerHTML = '<div id="scroll"><span>plain area</span><button>action</button></div>';
+    document.querySelectorAll('body *').forEach(element => box(element, 10, 10, 100, 80));
+    const scroller = document.getElementById('scroll'); Object.defineProperties(scroller, { clientHeight: { value: 80 }, scrollHeight: { value: 320 } });
+    const events = []; bridge = createBridge(window, async value => { events.push(value); return {}; }); bridge.snapshot();
+    document.querySelector('span').dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+    const hover = events.find(value => value.action === 'hover'); expect(hover.ancestors).toContain(bridge.identify(scroller));
+    expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(scroller))).toBe(false);
+    const scroll = bridge.scrollOwner(hover.ancestors, 'Y', 1); expect(scroll.range).toBe(240); expect(scroll.index).toBe(0);
+  });
+  it('does not turn outline mutations into refresh or native-discovery work', async () => {
+    document.body.innerHTML = '<button>action</button>'; box(document.querySelector('button'));
+    const events = []; bridge = createBridge(window, async value => { events.push(value); return {}; }); const id = bridge.snapshot().targets[0].id;
+    for (let index = 0; index < 100; index++) bridge.render({ mode: 'WINDOW', scope: 'window', targetId: id });
+    await Promise.resolve(); expect(events.filter(value => value.action === 'dirty')).toHaveLength(0);
+  });
+  it('updates open shadow controls through their original mutation observer', async () => {
+    document.body.innerHTML = '<div id="host"></div>'; const host = document.getElementById('host'); box(host);
+    const root = host.attachShadow({ mode: 'open' }); bridge = createBridge(window, async () => ({}));
+    const button = document.createElement('button'); button.textContent = 'shadow action'; box(button); root.appendChild(button);
+    await Promise.resolve(); expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(button))).toBe(true);
+    button.remove(); await Promise.resolve(); expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(button))).toBe(false);
+  });
+  it('observes a native-discovered empty closed shadow root without exposing its host as a control', async () => {
+    document.body.innerHTML = '<div id="host"></div>'; const host = document.getElementById('host'); box(host);
+    const root = host.attachShadow({ mode: 'closed' }); bridge = createBridge(window, async () => ({})); bridge.native([{ node: root, clickable: false }]);
+    expect(bridge.snapshot().targets).toHaveLength(0);
+    const button = document.createElement('button'); button.textContent = 'closed shadow action'; box(button); root.appendChild(button);
+    await Promise.resolve(); expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(button))).toBe(true);
+    expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(host))).toBe(false);
   });
 });
