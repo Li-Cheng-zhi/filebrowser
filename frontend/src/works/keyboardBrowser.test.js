@@ -49,6 +49,23 @@ describe('production keyboard document boundary', () => {
     custom.addEventListener('click', () => {}); bridge.native([{ node: custom }]);
     expect(bridge.snapshot().targets.find(t => t.label === 'custom')?.id).toBe(snapshot.targets.find(t => t.label === 'custom')?.id);
   });
+  it('keeps independently clickable parents and children as distinct original actions', async () => {
+    document.body.innerHTML = '<div id="parent" aria-label="parent action"><button aria-label="child action">child</button></div>';
+    const parent = document.getElementById('parent'), child = parent.firstElementChild, actions = [];
+    box(parent, 0, 0, 100, 100); box(child, 40, 40, 20, 20);
+    parent.addEventListener('click', () => actions.push('parent'));
+    child.addEventListener('click', event => { event.stopPropagation(); actions.push('child'); });
+    bridge = createBridge(window, async () => ({}));
+    bridge.native([{ node: parent, clickable: true }]);
+    const targets = bridge.snapshot().targets;
+    expect(targets).toHaveLength(2);
+    const parentId = targets.find(target => target.label === 'parent action').id;
+    const childId = targets.find(target => target.label === 'child action').id;
+    expect(parentId).not.toBe(childId);
+    expect((await bridge.apply({ targetId: parentId, operation: 'activate', arguments: {} })).kind).toBe('APPLIED');
+    expect((await bridge.apply({ targetId: childId, operation: 'activate', arguments: {} })).kind).toBe('APPLIED');
+    expect(actions).toEqual(['parent', 'child']);
+  });
   it('retains actual offscreen focus while marking it ineligible for a new blue selection', async () => {
     document.body.innerHTML = '<a href="/ok">offscreen</a><button>visible</button><textarea></textarea>';
     const link = document.querySelector('a'); box(link, -288, 10, 256, 20); box(document.querySelector('button')); box(document.querySelector('textarea'));
