@@ -36,6 +36,15 @@ function rangeLayout(columns = 4) {
   };
 }
 describe('production keyboard document boundary', () => {
+  it('sends plain and shifted R to the host in window mode, like the other window keys', () => {
+    document.body.innerHTML = '<button>B</button>';
+    const observed = []; bridge = createBridge(window, async data => { observed.push(data); return {}; });
+    for (const shiftKey of [false, true]) {
+      const event = new KeyboardEvent('keydown', { key: shiftKey ? 'R' : 'r', code: 'KeyR', shiftKey, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event); expect(event.defaultPrevented).toBe(true);
+    }
+    expect(observed.filter(v => v.action === 'key').map(v => [v.key, v.shift])).toEqual([['r', false], ['R', true]]);
+  });
   it('keeps original event APIs and discovers current native listeners without geometry deduplication', () => {
     const add = window.EventTarget.prototype.addEventListener, remove = window.EventTarget.prototype.removeEventListener;
     document.body.innerHTML = '<button>A</button><button>B</button><input type="checkbox"><input type="radio"><label>C</label><div id="native">custom</div>';
@@ -387,19 +396,87 @@ describe('production keyboard document boundary', () => {
     document.querySelectorAll('body *').forEach(element => box(element)); bridge = createBridge(window, async () => ({}));
     expect(bridge.snapshot().scopeMode).toBe('MENU');
   });
+  it('treats a registered editor as one input: inner parts are not controls and focus resolves to the editor root', () => {
+    // The shape Monaco 0.57 actually renders (observed in the installed app): an EditContext div
+    // that is not contenteditable, scrollbar sliders and a sticky-scroll widget inside the root.
+    document.body.innerHTML = '<div id="editor"><div class="native-edit-context" role="textbox" tabindex="0"></div>' +
+      '<div class="slider"></div><div class="slider"></div><div class="sticky-widget"></div><button>editor action</button></div><input id="other">';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const editor = document.getElementById('editor'), inner = document.querySelector('.native-edit-context'), events = [];
+    // These inner nodes are discovered as clickable by the native layer, which is what made them controls.
+    window.__worksDesktopKeyboardEditors = new Map([[editor, { geometry: () => null }]]);
+    bridge = createBridge(window, async value => { events.push(value); return {}; });
+    bridge.native([...document.querySelectorAll('#editor *')].map(node => ({ node, clickable: true })));
+    const ids = bridge.snapshot().targets.map(value => value.id);
+    expect(ids).toContain(bridge.identify(editor));
+    // The root is the only target that belongs to the editor; the independent input outside it is unaffected.
+    for (const node of document.querySelectorAll('#editor *')) expect(ids).not.toContain(bridge.identify(node));
+    expect(ids).toContain(bridge.identify(document.getElementById('other')));
+    inner.focus();
+    const interaction = events.findLast(value => value.action === 'interaction');
+    expect(interaction.targetId).toBe(bridge.identify(editor)); expect(interaction.editable).toBe(true);
+    document.getElementById('other').focus();
+    expect(events.some(value => value.action === 'focus-lost' && value.targetId === bridge.identify(editor))).toBe(true);
+    window.__worksDesktopKeyboardEditors.delete(editor); bridge.changedEditors();
+    expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(editor))).toBe(false);
+    window.__worksDesktopKeyboardEditors.clear();
+  });
   it('keeps independent editor buttons out of text routing and observes actual focus loss', () => {
     document.body.innerHTML = '<div id="editor"><textarea></textarea><button>editor action</button></div><input id="other">';
     document.querySelectorAll('body *').forEach(element => box(element));
     const editor = document.getElementById('editor'), button = document.querySelector('button'), events = [];
     window.__worksDesktopKeyboardEditors = new Map([[editor, { geometry: () => null }]]);
     bridge = createBridge(window, async value => { events.push(value); return {}; });
-    const target = bridge.snapshot().targets.find(value => value.id === bridge.identify(button));
-    expect(target.capabilities).toEqual(['ACTIVATE']);
-    button.focus(); expect(events.findLast(value => value.action === 'interaction')?.editable).toBe(false);
+    // A registered editor is one input, so a button rendered inside it is no longer a separate control:
+    // focusing it resolves to the editor root, which stays in text routing.
+    expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(button))).toBe(false);
+    button.focus();
+    const focused = events.findLast(value => value.action === 'interaction');
+    expect(focused?.editable).toBe(true); expect(focused?.targetId).toBe(bridge.identify(editor));
     document.querySelector('textarea').focus(); document.getElementById('other').focus();
     expect(events.some(value => value.action === 'focus-lost' && value.targetId === bridge.identify(editor))).toBe(true);
     window.__worksDesktopKeyboardEditors.delete(editor); bridge.changedEditors();
     expect(bridge.snapshot().targets.some(value => value.id === bridge.identify(editor))).toBe(false);
+    window.__worksDesktopKeyboardEditors.clear();
+  });
+  it('lets a registered editor capture every key and leaves only on a quick second plain Escape', () => {
+    document.body.innerHTML = '<div id="editor"><textarea></textarea></div>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const editor = document.getElementById('editor'), area = document.querySelector('textarea'), events = [];
+    window.__worksDesktopKeyboardEditors = new Map([[editor, { geometry: () => null }]]);
+    bridge = createBridge(window, async value => { events.push(value); return {}; });
+    area.focus();
+    const press = (key, extra = {}, stamp) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra });
+      if (stamp != null) Object.defineProperty(event, 'timeStamp', { value: stamp });
+      area.dispatchEvent(event); return event;
+    };
+    for (const key of ['ArrowLeft', 'ArrowDown', 'Enter', 'a', 'j', 'w']) expect(press(key).defaultPrevented).toBe(false);
+    expect(press('Escape', {}, 1000).defaultPrevented).toBe(false);
+    expect(events.filter(value => value.action === 'key')).toHaveLength(0);
+    expect(press('ArrowRight').defaultPrevented).toBe(false);
+    // 1100 -> 2200 is an 1100ms gap: outside even the widened 900ms window, so this one
+    // starts a fresh "first Escape" rather than completing the previous one.
+    expect(press('Escape', {}, 1100).defaultPrevented).toBe(false);
+    expect(press('Escape', {}, 2200).defaultPrevented).toBe(false);
+    // 2200 -> 2950 is a 750ms gap: a real, if unhurried, double-tap. Must still count.
+    const second = press('Escape', {}, 2950);
+    expect(second.defaultPrevented).toBe(true);
+    expect(events.filter(value => value.action === 'key' && value.key === 'Escape')).toHaveLength(1);
+    expect(press('Escape', { shiftKey: true }, 3000).defaultPrevented).toBe(false);
+    window.__worksDesktopKeyboardEditors.clear();
+  });
+  it('blurs the editor\'s actually-focused descendant, not just the registered container', async () => {
+    document.body.innerHTML = '<div id="editor"><input id="inner"></div>';
+    document.querySelectorAll('body *').forEach(element => box(element));
+    const editor = document.getElementById('editor'), inner = document.getElementById('inner');
+    window.__worksDesktopKeyboardEditors = new Map([[editor, { geometry: () => null }]]);
+    bridge = createBridge(window, async () => ({}));
+    inner.focus();
+    expect(document.activeElement).toBe(inner);
+    const id = bridge.identify(editor);
+    expect((await bridge.apply({ targetId: id, operation: 'blur' })).kind).toBe('APPLIED');
+    expect(document.activeElement).not.toBe(inner);
     window.__worksDesktopKeyboardEditors.clear();
   });
   it('does not treat ARIA disabled as native disabled and leaves activation to the host input', async () => {
